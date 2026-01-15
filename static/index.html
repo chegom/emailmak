@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>이메일 크롤러 - 사람인 회사 정보 수집</title>
+    <meta name="description" content="채용사이트에서 회사 이메일을 자동으로 수집하는 크롤링 도구">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">📧</span>
+                <h1>Email Crawler</h1>
+            </div>
+            <p class="subtitle">채용사이트에서 회사 이메일을 자동으로 수집합니다</p>
+        </header>
+
+        <!-- Search Section -->
+        <section class="search-section">
+            <div class="search-card">
+                <div class="search-form">
+                    <div class="input-group">
+                        <label for="keyword">검색어</label>
+                        <input 
+                            type="text" 
+                            id="keyword" 
+                            placeholder="예: 3PL, 물류, IT 개발자..."
+                            autocomplete="off"
+                        >
+                    </div>
+                    
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label for="pages">페이지 수</label>
+                            <select id="pages">
+                                <option value="1">1 페이지</option>
+                                <option value="2">2 페이지</option>
+                                <option value="3">3 페이지</option>
+                                <option value="5" selected>5 페이지</option>
+                                <option value="10">10 페이지</option>
+                            </select>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label for="source">크롤링 소스</label>
+                            <select id="source">
+                                <option value="saramin" selected>사람인</option>
+                                <option value="jobkorea" disabled>잡코리아 (준비중)</option>
+                                <option value="wanted" disabled>원티드 (준비중)</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <button type="button" id="crawlBtn" class="btn-primary">
+                        <span class="btn-icon">🔍</span>
+                        <span class="btn-text">크롤링 시작</span>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Progress Section -->
+        <section id="progressSection" class="progress-section hidden">
+            <div class="progress-card">
+                <div class="progress-header">
+                    <span class="progress-title">크롤링 진행중...</span>
+                    <span id="progressCount" class="progress-count">0 / 0</span>
+                </div>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <p id="progressStatus" class="progress-status">검색 결과를 수집하는 중입니다...</p>
+            </div>
+        </section>
+
+        <!-- Results Section -->
+        <section id="resultsSection" class="results-section hidden">
+            <div class="results-header">
+                <h2>검색 결과</h2>
+                <div class="results-meta">
+                    <span id="totalCount" class="badge">0개 회사</span>
+                    <span id="emailCount" class="badge badge-success">이메일 0개</span>
+                    <button id="exportBtn" class="btn-secondary">
+                        <span>📥</span> CSV 내보내기
+                    </button>
+                </div>
+            </div>
+            
+            <div id="resultsList" class="results-list">
+                <!-- 결과가 여기에 동적으로 추가됩니다 -->
+            </div>
+        </section>
+
+        <!-- Empty State -->
+        <section id="emptyState" class="empty-state">
+            <div class="empty-icon">🔎</div>
+            <h3>검색어를 입력하고 크롤링을 시작하세요</h3>
+            <p>사람인에서 회사 정보와 이메일을 자동으로 수집합니다</p>
+        </section>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

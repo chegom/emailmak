@@ -1,0 +1,345 @@
+/**
+ * Email Crawler Frontend Application
+ */
+
+// DOM Elements
+const keywordInput = document.getElementById('keyword');
+const pagesSelect = document.getElementById('pages');
+const sourceSelect = document.getElementById('source');
+const crawlBtn = document.getElementById('crawlBtn');
+
+const progressSection = document.getElementById('progressSection');
+const progressFill = document.getElementById('progressFill');
+const progressCount = document.getElementById('progressCount');
+const progressStatus = document.getElementById('progressStatus');
+
+const resultsSection = document.getElementById('resultsSection');
+const resultsList = document.getElementById('resultsList');
+const totalCount = document.getElementById('totalCount');
+const emailCount = document.getElementById('emailCount');
+const exportBtn = document.getElementById('exportBtn');
+
+const emptyState = document.getElementById('emptyState');
+
+// State
+let results = [];
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    initEventListeners();
+});
+
+function initEventListeners() {
+    // 크롤링 버튼 클릭
+    crawlBtn.addEventListener('click', startCrawl);
+
+    // Enter 키 입력
+    keywordInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            startCrawl();
+        }
+    });
+
+    // CSV 내보내기
+    exportBtn.addEventListener('click', exportToCSV);
+}
+
+/**
+ * 크롤링 시작
+ */
+async function startCrawl() {
+    const keyword = keywordInput.value.trim();
+    const pages = parseInt(pagesSelect.value);
+    const source = sourceSelect.value;
+
+    if (!keyword) {
+        showToast('검색어를 입력해주세요.', 'warning');
+        keywordInput.focus();
+        return;
+    }
+
+    // UI 상태 변경
+    setLoading(true);
+    showProgress();
+    hideResults();
+    results = [];
+
+    try {
+        // SSE 스트리밍으로 크롤링
+        await crawlWithStream(keyword, pages, source);
+    } catch (error) {
+        console.error('Crawl error:', error);
+        showToast('크롤링 중 오류가 발생했습니다: ' + error.message, 'error');
+    } finally {
+        setLoading(false);
+    }
+}
+
+/**
+ * SSE 스트리밍으로 크롤링
+ */
+async function crawlWithStream(keyword, pages, source) {
+    const response = await fetch('/api/crawl/stream', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ keyword, pages, source }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    let buffer = '';
+
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE 메시지 파싱
+        const lines = buffer.split('\n');
+        buffer = lines.pop(); // 마지막 불완전한 라인은 버퍼에 유지
+
+        for (const line of lines) {
+            if (line.startsWith('data: ')) {
+                try {
+                    const data = JSON.parse(line.slice(6));
+                    handleStreamMessage(data);
+                } catch (e) {
+                    console.warn('Failed to parse SSE message:', line);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 스트림 메시지 처리
+ */
+function handleStreamMessage(data) {
+    switch (data.type) {
+        case 'start':
+            updateProgress(0, data.total, '회사 정보를 수집하는 중입니다...');
+            showResults();
+            break;
+
+        case 'progress':
+            updateProgress(data.current, data.total, `${data.company.company_name} 처리 중...`);
+            addResult(data.company);
+            break;
+
+        case 'complete':
+            updateProgress(data.total, data.total, '크롤링 완료!');
+            setTimeout(() => hideProgress(), 1000);
+            updateResultsCount();
+            showToast(`크롤링 완료! ${results.length}개 회사 수집됨`, 'success');
+            break;
+
+        case 'error':
+            showToast(data.message, 'error');
+            hideProgress();
+            break;
+    }
+}
+
+/**
+ * 진행 상태 업데이트
+ */
+function updateProgress(current, total, status) {
+    const percent = total > 0 ? (current / total) * 100 : 0;
+    progressFill.style.width = `${percent}%`;
+    progressCount.textContent = `${current} / ${total}`;
+    progressStatus.textContent = status;
+}
+
+/**
+ * 결과 추가
+ */
+function addResult(company) {
+    results.push(company);
+
+    const hasEmail = company.emails && company.emails.length > 0;
+
+    const card = document.createElement('div');
+    card.className = `result-card ${hasEmail ? 'has-email' : ''}`;
+
+    card.innerHTML = `
+        <div class="result-header">
+            <div>
+                <div class="company-name">${escapeHtml(company.company_name)}</div>
+                ${company.job_title ? `<div class="job-title">${escapeHtml(company.job_title)}</div>` : ''}
+            </div>
+            <div class="result-links">
+                ${company.company_url ? `<a href="${escapeHtml(company.company_url)}" target="_blank" class="link-btn">📋 사람인</a>` : ''}
+                ${company.homepage ? `<a href="${escapeHtml(company.homepage)}" target="_blank" class="link-btn">🌐 홈페이지</a>` : ''}
+            </div>
+        </div>
+        <div class="email-list">
+            ${hasEmail
+            ? company.emails.map(email => `
+                    <span class="email-tag" onclick="copyEmail('${escapeHtml(email)}')">
+                        ${escapeHtml(email)}
+                        <span class="copy-icon">📋</span>
+                    </span>
+                `).join('')
+            : '<span class="no-email">이메일을 찾지 못했습니다</span>'
+        }
+        </div>
+    `;
+
+    resultsList.appendChild(card);
+    updateResultsCount();
+}
+
+/**
+ * 결과 수 업데이트
+ */
+function updateResultsCount() {
+    const total = results.length;
+    const withEmail = results.filter(r => r.emails && r.emails.length > 0).length;
+    const totalEmails = results.reduce((sum, r) => sum + (r.emails ? r.emails.length : 0), 0);
+
+    totalCount.textContent = `${total}개 회사`;
+    emailCount.textContent = `이메일 ${totalEmails}개`;
+}
+
+/**
+ * 이메일 복사
+ */
+function copyEmail(email) {
+    navigator.clipboard.writeText(email).then(() => {
+        showToast(`${email} 복사됨!`, 'success');
+    }).catch(() => {
+        showToast('복사 실패', 'error');
+    });
+}
+
+/**
+ * CSV 내보내기
+ */
+function exportToCSV() {
+    if (results.length === 0) {
+        showToast('내보낼 데이터가 없습니다.', 'warning');
+        return;
+    }
+
+    // CSV 헤더
+    const headers = ['회사명', '채용공고', '홈페이지', '이메일'];
+
+    // CSV 데이터
+    const rows = results.map(r => [
+        r.company_name || '',
+        r.job_title || '',
+        r.homepage || '',
+        (r.emails || []).join('; ')
+    ]);
+
+    // CSV 문자열 생성
+    const csvContent = [
+        headers.join(','),
+        ...rows.map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(','))
+    ].join('\n');
+
+    // BOM 추가 (한글 지원)
+    const bom = '\uFEFF';
+    const blob = new Blob([bom + csvContent], { type: 'text/csv;charset=utf-8;' });
+
+    // 다운로드
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `email_crawl_${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+
+    showToast('CSV 파일 다운로드 완료!', 'success');
+}
+
+/**
+ * UI 헬퍼 함수들
+ */
+function setLoading(loading) {
+    crawlBtn.disabled = loading;
+    if (loading) {
+        crawlBtn.classList.add('loading');
+    } else {
+        crawlBtn.classList.remove('loading');
+    }
+}
+
+function showProgress() {
+    progressSection.classList.remove('hidden');
+    emptyState.classList.add('hidden');
+    progressFill.style.width = '0%';
+}
+
+function hideProgress() {
+    progressSection.classList.add('hidden');
+}
+
+function showResults() {
+    resultsSection.classList.remove('hidden');
+    emptyState.classList.add('hidden');
+    resultsList.innerHTML = '';
+}
+
+function hideResults() {
+    resultsSection.classList.add('hidden');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * 토스트 메시지
+ */
+function showToast(message, type = 'info') {
+    // 기존 토스트 제거
+    const existing = document.querySelector('.toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 12px 24px;
+        background: ${type === 'success' ? '#10b981' : type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#6366f1'};
+        color: white;
+        border-radius: 8px;
+        font-weight: 500;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        z-index: 1000;
+        animation: slideUp 0.3s ease;
+    `;
+
+    document.body.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.animation = 'fadeOut 0.3s ease forwards';
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// 애니메이션 스타일 추가
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideUp {
+        from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+        to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    @keyframes fadeOut {
+        to { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+    }
+`;
+document.head.appendChild(style);
