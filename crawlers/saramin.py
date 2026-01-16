@@ -128,20 +128,44 @@ class SaraminCrawler(BaseCrawler):
         # 회사 홈페이지 링크 찾기
         homepage = None
         
-        # 방법 1: 회사정보 섹션에서 홈페이지 찾기
-        for link in soup.select('a[href*="http"]'):
-            href = link.get('href', '')
-            text = link.get_text(strip=True).lower()
-            
-            # 홈페이지 관련 텍스트 또는 외부 링크
-            if any(kw in text for kw in ['홈페이지', '회사소개', 'homepage', 'website']):
-                if 'saramin.co.kr' not in href:
-                    homepage = href
-                    break
+        # 방법 1: company_details_group 구조에서 홈페이지 찾기 (사람인 실제 구조)
+        # <dt class="tit">홈페이지</dt> 다음의 <dd class="desc"><a href="...">
+        dt_elements = soup.find_all('dt', class_='tit')
+        for dt in dt_elements:
+            if '홈페이지' in dt.get_text():
+                # 다음 형제 요소(dd)에서 링크 찾기
+                dd = dt.find_next_sibling('dd')
+                if dd:
+                    link = dd.find('a', href=True)
+                    if link:
+                        href = link.get('href', '')
+                        if href.startswith('http') and 'saramin.co.kr' not in href:
+                            homepage = href
+                            break
         
-        # 방법 2: 기업정보 테이블에서 찾기
+        # 방법 2: dl.company_details a.ellipsis 셀렉터 사용
         if not homepage:
-            info_items = soup.select('.info_item, .tb_col_list td')
+            link = soup.select_one('dl.company_details a.ellipsis')
+            if link:
+                href = link.get('href', '')
+                if href.startswith('http') and 'saramin.co.kr' not in href:
+                    homepage = href
+        
+        # 방법 3: 일반적인 외부 링크 탐색 (fallback)
+        if not homepage:
+            for link in soup.select('a[href^="http"]'):
+                href = link.get('href', '')
+                text = link.get_text(strip=True).lower()
+                
+                # 홈페이지 관련 텍스트 또는 회사 도메인 링크
+                if any(kw in text for kw in ['홈페이지', '회사소개', 'homepage', 'website']):
+                    if 'saramin.co.kr' not in href:
+                        homepage = href
+                        break
+        
+        # 방법 4: 기업정보 테이블에서 찾기 (fallback)
+        if not homepage:
+            info_items = soup.select('.info_item, .tb_col_list td, dd.desc')
             for item in info_items:
                 link = item.find('a', href=True)
                 if link:
@@ -150,6 +174,7 @@ class SaraminCrawler(BaseCrawler):
                         homepage = href
                         break
         
+        print(f"[DEBUG] Found homepage for {company_url}: {homepage}")
         return {'homepage': homepage}
     
     async def crawl_with_emails(self, keyword: str, pages: int = 5, 
