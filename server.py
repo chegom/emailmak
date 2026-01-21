@@ -162,6 +162,64 @@ async def crawl_stream(request: CrawlRequest):
     )
 
 
+# 디버그 엔드포인트 - JobKorea 크롤링 진단용
+@app.get("/api/debug/jobkorea")
+async def debug_jobkorea(keyword: str = "개발자"):
+    """JobKorea 크롤링 디버그 - Railway 환경 테스트용"""
+    from urllib.parse import quote
+    import httpx
+    
+    results = {
+        "keyword": keyword,
+        "search_url": None,
+        "search_response": {
+            "status_code": None,
+            "content_length": 0,
+            "has_job_cards": False,
+            "job_card_count": 0,
+            "sample_html": ""
+        },
+        "parsed_companies": [],
+        "errors": []
+    }
+    
+    try:
+        search_url = f"https://www.jobkorea.co.kr/Search/?stext={quote(keyword)}&Page_No=1"
+        results["search_url"] = search_url
+        
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        }
+        
+        async with httpx.AsyncClient(headers=headers, timeout=15.0, follow_redirects=True) as client:
+            response = await client.get(search_url)
+            results["search_response"]["status_code"] = response.status_code
+            results["search_response"]["content_length"] = len(response.text)
+            
+            # HTML 샘플 (첫 2000자)
+            results["search_response"]["sample_html"] = response.text[:2000]
+            
+            # Job cards 확인
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(response.text, 'lxml')
+            
+            job_cards = soup.select('div[class*="Box_bgColor_white"][class*="Box_borderColor"]')
+            results["search_response"]["has_job_cards"] = len(job_cards) > 0
+            results["search_response"]["job_card_count"] = len(job_cards)
+            
+            # 실제 크롤러로 파싱 테스트
+            async with JobKoreaCrawler() as crawler:
+                companies = await crawler.search(keyword, 1, 1)
+                results["parsed_companies"] = companies[:5]  # 최대 5개만
+            
+    except Exception as e:
+        results["errors"].append(str(e))
+    
+    return results
+
+
 # 정적 파일 서빙
 @app.get("/")
 async def root():
