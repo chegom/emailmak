@@ -21,26 +21,28 @@ class SaraminCrawler(BaseCrawler):
         super().__init__(timeout)
         self.email_extractor = EmailExtractor(timeout=8.0)
     
-    async def search(self, keyword: str, pages: int = 5) -> List[Dict[str, Any]]:
+    async def search(self, keyword: str, start_page: int = 1, end_page: int = 5) -> List[Dict[str, Any]]:
         """
         사람인에서 키워드 검색 후 회사 목록 반환
         
         Args:
             keyword: 검색 키워드
-            pages: 크롤링할 페이지 수 (기본 5)
+            start_page: 시작 페이지 (기본 1)
+            end_page: 끝 페이지 (기본 5)
         
         Returns:
             회사 정보 리스트 [{company_name, company_url, job_title}, ...]
         """
         companies = []
+        total_pages = end_page - start_page + 1
         
-        for page in range(1, pages + 1):
-            print(f"[INFO] Crawling page {page}...")
+        for page in range(start_page, end_page + 1):
+            print(f"[INFO] Crawling page {page} ({page - start_page + 1}/{total_pages})...")
             page_companies = await self._search_page(keyword, page)
             companies.extend(page_companies)
             
             # 요청 간 딜레이
-            if page < pages:
+            if page < end_page:
                 await asyncio.sleep(0.5)
         
         # 중복 제거 (회사 URL 기준)
@@ -177,24 +179,25 @@ class SaraminCrawler(BaseCrawler):
         print(f"[DEBUG] Found homepage for {company_url}: {homepage}")
         return {'homepage': homepage}
     
-    async def crawl_with_emails(self, keyword: str, pages: int = 5, 
+    async def crawl_with_emails(self, keyword: str, start_page: int = 1, end_page: int = 5, 
                                  progress_callback=None) -> List[Dict[str, Any]]:
         """
         검색부터 이메일 추출까지 전체 크롤링
         
         Args:
             keyword: 검색 키워드
-            pages: 크롤링할 페이지 수
+            start_page: 시작 페이지
+            end_page: 끝 페이지
             progress_callback: 진행 상황 콜백 함수 (current, total, company_name)
         
         Returns:
             완성된 회사 정보 리스트
         """
         # 1. 검색 결과 수집
-        companies = await self.search(keyword, pages)
+        companies = await self.search(keyword, start_page, end_page)
         total = len(companies)
         
-        print(f"[INFO] Found {total} companies. Extracting emails...")
+        print(f"[INFO] Found {total} companies (pages {start_page}-{end_page}). Extracting emails...")
         
         # 2. 각 회사별 홈페이지 및 이메일 추출
         for idx, company in enumerate(companies):

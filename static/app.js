@@ -4,7 +4,8 @@
 
 // DOM Elements
 const keywordInput = document.getElementById('keyword');
-const pagesSelect = document.getElementById('pages');
+const startPageInput = document.getElementById('startPage');
+const endPageInput = document.getElementById('endPage');
 const sourceSelect = document.getElementById('source');
 const crawlBtn = document.getElementById('crawlBtn');
 
@@ -20,9 +21,12 @@ const emailCount = document.getElementById('emailCount');
 const exportBtn = document.getElementById('exportBtn');
 
 const emptyState = document.getElementById('emptyState');
+const stopBtn = document.getElementById('stopBtn');
 
 // State
 let results = [];
+let abortController = null;
+let isCrawling = false;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -42,6 +46,9 @@ function initEventListeners() {
 
     // CSV 내보내기
     exportBtn.addEventListener('click', exportToCSV);
+
+    // 정지 버튼 클릭
+    stopBtn.addEventListener('click', stopCrawl);
 }
 
 /**
@@ -49,7 +56,8 @@ function initEventListeners() {
  */
 async function startCrawl() {
     const keyword = keywordInput.value.trim();
-    const pages = parseInt(pagesSelect.value);
+    const startPage = parseInt(startPageInput.value) || 1;
+    const endPage = parseInt(endPageInput.value) || 5;
     const source = sourceSelect.value;
 
     if (!keyword) {
@@ -58,33 +66,72 @@ async function startCrawl() {
         return;
     }
 
+    if (startPage > endPage) {
+        showToast('시작 페이지는 끝 페이지보다 작거나 같아야 합니다.', 'warning');
+        startPageInput.focus();
+        return;
+    }
+
+    if (startPage < 1 || endPage < 1) {
+        showToast('페이지 번호는 1 이상이어야 합니다.', 'warning');
+        return;
+    }
+
+    // AbortController 초기화
+    abortController = new AbortController();
+    isCrawling = true;
+
     // UI 상태 변경
     setLoading(true);
     showProgress();
     hideResults();
     results = [];
 
+    // 정지 버튼 활성화
+    stopBtn.disabled = false;
+
     try {
         // SSE 스트리밍으로 크롤링
-        await crawlWithStream(keyword, pages, source);
+        await crawlWithStream(keyword, startPage, endPage, source);
     } catch (error) {
-        console.error('Crawl error:', error);
-        showToast('크롤링 중 오류가 발생했습니다: ' + error.message, 'error');
+        if (error.name === 'AbortError') {
+            // 사용자가 정지한 경우
+            showToast(`크롤링 정지됨. ${results.length}개 회사 수집됨`, 'warning');
+            updateProgress(results.length, results.length, '정지됨');
+        } else {
+            console.error('Crawl error:', error);
+            showToast('크롤링 중 오류가 발생했습니다: ' + error.message, 'error');
+        }
     } finally {
         setLoading(false);
+        isCrawling = false;
+        stopBtn.disabled = true;
+        setTimeout(() => hideProgress(), 1000);
+        updateResultsCount();
+    }
+}
+
+/**
+ * 크롤링 정지
+ */
+function stopCrawl() {
+    if (abortController && isCrawling) {
+        abortController.abort();
+        isCrawling = false;
     }
 }
 
 /**
  * SSE 스트리밍으로 크롤링
  */
-async function crawlWithStream(keyword, pages, source) {
+async function crawlWithStream(keyword, startPage, endPage, source) {
     const response = await fetch('/api/crawl/stream', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ keyword, pages, source }),
+        body: JSON.stringify({ keyword, start_page: startPage, end_page: endPage, source }),
+        signal: abortController.signal,
     });
 
     if (!response.ok) {
@@ -97,6 +144,12 @@ async function crawlWithStream(keyword, pages, source) {
     let buffer = '';
 
     while (true) {
+        // 정지 버튼이 눌렸는지 확인
+        if (!isCrawling) {
+            reader.cancel();
+            throw new DOMException('Crawling stopped by user', 'AbortError');
+        }
+
         const { value, done } = await reader.read();
         if (done) break;
 
@@ -176,7 +229,7 @@ function addResult(company) {
                 ${company.job_title ? `<div class="job-title">${escapeHtml(company.job_title)}</div>` : ''}
             </div>
             <div class="result-links">
-                ${company.company_url ? `<a href="${escapeHtml(company.company_url)}" target="_blank" class="link-btn">📋 사람인</a>` : ''}
+                ${getSourceLinks(company)}
                 ${company.homepage ? `<a href="${escapeHtml(company.homepage)}" target="_blank" class="link-btn">🌐 홈페이지</a>` : ''}
             </div>
         </div>
@@ -210,6 +263,31 @@ function updateResultsCount() {
 }
 
 /**
+ * 소스별 링크 생성
+ */
+function getSourceLinks(company) {
+    const source = company.source || 'saramin';
+    let links = '';
+
+    if (source === 'jobkorea') {
+        // 잡코리아: job_url(채용공고)과 company_url(회사정보) 모두 표시
+        if (company.job_url) {
+            links += `<a href="${escapeHtml(company.job_url)}" target="_blank" class="link-btn">📋 잡코리아</a>`;
+        }
+        if (company.company_url) {
+            links += `<a href="${escapeHtml(company.company_url)}" target="_blank" class="link-btn">🏢 회사정보</a>`;
+        }
+    } else {
+        // 사람인
+        if (company.company_url) {
+            links += `<a href="${escapeHtml(company.company_url)}" target="_blank" class="link-btn">📋 사람인</a>`;
+        }
+    }
+
+    return links;
+}
+
+/**
  * 이메일 복사
  */
 function copyEmail(email) {
@@ -230,12 +308,11 @@ function exportToCSV() {
     }
 
     // CSV 헤더
-    const headers = ['회사명', '채용공고', '홈페이지', '이메일'];
+    const headers = ['회사명', '홈페이지', '이메일'];
 
     // CSV 데이터
     const rows = results.map(r => [
         r.company_name || '',
-        r.job_title || '',
         r.homepage || '',
         (r.emails || []).join('; ')
     ]);

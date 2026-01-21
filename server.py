@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from crawlers import SaraminCrawler
+from crawlers.jobkorea import JobKoreaCrawler
 
 
 app = FastAPI(
@@ -33,7 +34,8 @@ app.add_middleware(
 class CrawlRequest(BaseModel):
     """크롤링 요청 모델"""
     keyword: str
-    pages: int = 5
+    start_page: int = 1
+    end_page: int = 5
     source: str = "saramin"  # 향후 확장용
 
 
@@ -54,24 +56,34 @@ async def crawl(request: CrawlRequest):
     if not request.keyword.strip():
         raise HTTPException(status_code=400, detail="검색어를 입력해주세요.")
     
-    if request.pages < 1 or request.pages > 10:
-        raise HTTPException(status_code=400, detail="페이지 수는 1~10 사이여야 합니다.")
+    if request.start_page < 1 or request.end_page < 1:
+        raise HTTPException(status_code=400, detail="페이지 번호는 1 이상이어야 합니다.")
+    
+    if request.start_page > request.end_page:
+        raise HTTPException(status_code=400, detail="시작 페이지는 끝 페이지보다 작거나 같아야 합니다.")
     
     try:
+        # 소스에 따른 크롤러 선택
         if request.source == "saramin":
-            async with SaraminCrawler() as crawler:
-                results = await crawler.crawl_with_emails(
-                    keyword=request.keyword,
-                    pages=request.pages
-                )
-                return {
-                    "success": True,
-                    "keyword": request.keyword,
-                    "total": len(results),
-                    "companies": results
-                }
+            crawler_class = SaraminCrawler
+        elif request.source == "jobkorea":
+            crawler_class = JobKoreaCrawler
         else:
             raise HTTPException(status_code=400, detail=f"지원하지 않는 소스: {request.source}")
+        
+        async with crawler_class() as crawler:
+            results = await crawler.crawl_with_emails(
+                keyword=request.keyword,
+                start_page=request.start_page,
+                end_page=request.end_page
+            )
+            return {
+                "success": True,
+                "keyword": request.keyword,
+                "source": request.source,
+                "total": len(results),
+                "companies": results
+            }
             
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -88,40 +100,54 @@ async def crawl_stream(request: CrawlRequest):
     
     async def generate():
         try:
+            # 소스에 따른 크롤러 선택
             if request.source == "saramin":
-                async with SaraminCrawler() as crawler:
-                    # 검색 결과 먼저 전송
-                    companies = await crawler.search(request.keyword, request.pages)
-                    total = len(companies)
-                    
-                    yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
-                    
-                    # 각 회사별 이메일 추출
-                    for idx, company in enumerate(companies):
-                        try:
-                            # 회사 상세 페이지에서 홈페이지 URL
-                            if company['company_url']:
-                                detail = await crawler.get_company_detail(company['company_url'])
-                                company['homepage'] = detail.get('homepage')
-                            
-                            # 홈페이지에서 이메일 추출
-                            if company['homepage']:
-                                emails = await crawler.email_extractor.extract_from_url(company['homepage'])
-                                company['emails'] = emails
-                            
-                            # 진행 상황 전송
-                            yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'company': company}, ensure_ascii=False)}\n\n"
-                            
-                            await asyncio.sleep(0.3)
-                            
-                        except Exception as e:
-                            print(f"[ERROR] {company['company_name']}: {e}")
-                            yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'company': company}, ensure_ascii=False)}\n\n"
-                    
-                    # 완료 메시지
-                    yield f"data: {json.dumps({'type': 'complete', 'total': total})}\n\n"
+                crawler_class = SaraminCrawler
+            elif request.source == "jobkorea":
+                crawler_class = JobKoreaCrawler
             else:
                 yield f"data: {json.dumps({'type': 'error', 'message': f'지원하지 않는 소스: {request.source}'})}\n\n"
+                return
+            
+            async with crawler_class() as crawler:
+                # 검색 결과 먼저 전송
+                companies = await crawler.search(request.keyword, request.start_page, request.end_page)
+                total = len(companies)
+                
+                yield f"data: {json.dumps({'type': 'start', 'total': total})}\n\n"
+                
+                # 각 회사별 이메일 추출
+                for idx, company in enumerate(companies):
+                    try:
+                        # 소스 정보 추가 (프론트엔드에서 링크 라벨 결정에 사용)
+                        company['source'] = request.source
+                        
+                        # 잡코리아의 경우: job_url에서 company_url 추출
+                        if request.source == 'jobkorea' and company.get('job_url') and not company.get('company_url'):
+                            company_url = await crawler._get_company_url_from_job(company['job_url'])
+                            company['company_url'] = company_url
+                        
+                        # 회사 상세 페이지에서 홈페이지 URL
+                        if company.get('company_url'):
+                            detail = await crawler.get_company_detail(company['company_url'])
+                            company['homepage'] = detail.get('homepage')
+                        
+                        # 홈페이지에서 이메일 추출
+                        if company.get('homepage'):
+                            emails = await crawler.email_extractor.extract_from_url(company['homepage'])
+                            company['emails'] = emails
+                        
+                        # 진행 상황 전송
+                        yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'company': company}, ensure_ascii=False)}\n\n"
+                        
+                        await asyncio.sleep(0.3)
+                        
+                    except Exception as e:
+                        print(f"[ERROR] {company['company_name']}: {e}")
+                        yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'company': company}, ensure_ascii=False)}\n\n"
+                
+                # 완료 메시지
+                yield f"data: {json.dumps({'type': 'complete', 'total': total})}\n\n"
                 
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
@@ -148,4 +174,4 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="ko">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -10,6 +11,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 </head>
+
 <body>
     <div class="container">
         <!-- Header -->
@@ -27,40 +29,38 @@
                 <div class="search-form">
                     <div class="input-group">
                         <label for="keyword">검색어</label>
-                        <input 
-                            type="text" 
-                            id="keyword" 
-                            placeholder="예: 3PL, 물류, IT 개발자..."
-                            autocomplete="off"
-                        >
+                        <input type="text" id="keyword" placeholder="예: 3PL, 물류, IT 개발자..." autocomplete="off">
                     </div>
-                    
-                    <div class="input-row">
-                        <div class="input-group">
-                            <label for="pages">페이지 수</label>
-                            <select id="pages">
-                                <option value="1">1 페이지</option>
-                                <option value="2">2 페이지</option>
-                                <option value="3">3 페이지</option>
-                                <option value="5" selected>5 페이지</option>
-                                <option value="10">10 페이지</option>
-                            </select>
-                        </div>
-                        
-                        <div class="input-group">
-                            <label for="source">크롤링 소스</label>
-                            <select id="source">
-                                <option value="saramin" selected>사람인</option>
-                                <option value="jobkorea" disabled>잡코리아 (준비중)</option>
-                                <option value="wanted" disabled>원티드 (준비중)</option>
-                            </select>
+
+                    <div class="input-group">
+                        <label for="source">크롤링 소스</label>
+                        <select id="source">
+                            <option value="saramin" selected>사람인</option>
+                            <option value="jobkorea">잡코리아</option>
+                            <option value="wanted" disabled>원티드 (준비중)</option>
+                        </select>
+                    </div>
+
+                    <div class="page-range-wrapper">
+                        <span class="page-range-label">📄 페이지 범위</span>
+                        <div class="page-range-inputs">
+                            <input type="number" id="startPage" min="1" max="100" value="1" class="page-input">
+                            <span class="page-range-separator">~</span>
+                            <input type="number" id="endPage" min="1" max="100" value="5" class="page-input">
+                            <span class="page-range-unit">페이지</span>
                         </div>
                     </div>
-                    
-                    <button type="button" id="crawlBtn" class="btn-primary">
-                        <span class="btn-icon">🔍</span>
-                        <span class="btn-text">크롤링 시작</span>
-                    </button>
+
+                    <div class="button-group">
+                        <button type="button" id="crawlBtn" class="btn-primary">
+                            <span class="btn-icon">🔍</span>
+                            <span class="btn-text">크롤링 시작</span>
+                        </button>
+                        <button type="button" id="stopBtn" class="btn-stop" disabled>
+                            <span class="btn-icon">⏹</span>
+                            <span class="btn-text">정지</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </section>
@@ -91,7 +91,7 @@
                     </button>
                 </div>
             </div>
-            
+
             <div id="resultsList" class="results-list">
                 <!-- 결과가 여기에 동적으로 추가됩니다 -->
             </div>
@@ -107,4 +107,5 @@
 
     <script src="/static/app.js"></script>
 </body>
+
 </html>
