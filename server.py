@@ -168,6 +168,7 @@ async def debug_jobkorea(keyword: str = "개발자"):
     """JobKorea 크롤링 디버그 - Railway 환경 테스트용"""
     from urllib.parse import quote
     import httpx
+    import re
     
     results = {
         "keyword": keyword,
@@ -177,9 +178,18 @@ async def debug_jobkorea(keyword: str = "개발자"):
             "content_length": 0,
             "has_job_cards": False,
             "job_card_count": 0,
-            "sample_html": ""
         },
         "parsed_companies": [],
+        "detail_test": {
+            "job_url": None,
+            "job_page_status": None,
+            "job_page_length": 0,
+            "co_read_pattern_found": False,
+            "company_url": None,
+            "company_page_status": None,
+            "company_page_length": 0,
+            "homepage_found": None,
+        },
         "errors": []
     }
     
@@ -198,9 +208,6 @@ async def debug_jobkorea(keyword: str = "개발자"):
             results["search_response"]["status_code"] = response.status_code
             results["search_response"]["content_length"] = len(response.text)
             
-            # HTML 샘플 (첫 2000자)
-            results["search_response"]["sample_html"] = response.text[:2000]
-            
             # Job cards 확인
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(response.text, 'lxml')
@@ -212,7 +219,36 @@ async def debug_jobkorea(keyword: str = "개발자"):
             # 실제 크롤러로 파싱 테스트
             async with JobKoreaCrawler() as crawler:
                 companies = await crawler.search(keyword, 1, 1)
-                results["parsed_companies"] = companies[:5]  # 최대 5개만
+                results["parsed_companies"] = companies[:3]  # 최대 3개만
+                
+                # 첫 번째 회사의 상세 정보 추출 테스트
+                if companies and companies[0].get('job_url'):
+                    job_url = companies[0]['job_url']
+                    results["detail_test"]["job_url"] = job_url
+                    
+                    # 1. 채용공고 페이지에서 회사URL 추출 테스트
+                    job_response = await client.get(job_url)
+                    results["detail_test"]["job_page_status"] = job_response.status_code
+                    results["detail_test"]["job_page_length"] = len(job_response.text)
+                    
+                    # Co_Read 패턴 찾기
+                    co_read_pattern = r'/Recruit/Co_Read/C/(\d+)'
+                    match = re.search(co_read_pattern, job_response.text)
+                    results["detail_test"]["co_read_pattern_found"] = match is not None
+                    
+                    if match:
+                        company_id = match.group(1)
+                        company_url = f"https://www.jobkorea.co.kr/Recruit/Co_Read/C/{company_id}"
+                        results["detail_test"]["company_url"] = company_url
+                        
+                        # 2. 회사 상세 페이지에서 홈페이지 URL 추출 테스트
+                        company_response = await client.get(company_url)
+                        results["detail_test"]["company_page_status"] = company_response.status_code
+                        results["detail_test"]["company_page_length"] = len(company_response.text)
+                        
+                        # 홈페이지 URL 찾기 (크롤러 로직과 동일)
+                        detail = await crawler.get_company_detail(company_url)
+                        results["detail_test"]["homepage_found"] = detail.get('homepage')
             
     except Exception as e:
         results["errors"].append(str(e))
