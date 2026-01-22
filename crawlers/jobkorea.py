@@ -58,7 +58,7 @@ class JobKoreaCrawler(BaseCrawler):
         return unique_companies
     
     async def _search_page(self, keyword: str, page: int) -> List[Dict[str, Any]]:
-        """단일 검색 페이지 크롤링"""
+        """단일 검색 페이지 크롤링 - 채용공고 탭"""
         url = f"{self.SEARCH_URL}?stext={quote(keyword)}&Page_No={page}"
         html = await self.fetch(url)
         
@@ -68,12 +68,12 @@ class JobKoreaCrawler(BaseCrawler):
         return self._parse_search_results(html)
     
     def _parse_search_results(self, html: str) -> List[Dict[str, Any]]:
-        """검색 결과 HTML 파싱 - 새로운 잡코리아 UI 구조"""
+        """검색 결과 HTML 파싱 - 채용공고에서 회사 정보 추출"""
         soup = BeautifulSoup(html, 'lxml')
         companies = []
         seen_companies = set()
         
-        # 새로운 UI: Box_bgColor_white + Box_borderColor를 가진 채용공고 카드 찾기
+        # 채용공고 카드 찾기
         job_cards = soup.select('div[class*="Box_bgColor_white"][class*="Box_borderColor"]')
         
         for card in job_cards:
@@ -84,7 +84,7 @@ class JobKoreaCrawler(BaseCrawler):
                 if len(links) < 2:
                     continue
                 
-                # 채용공고 URL (첫 번째 링크의 href)
+                # 채용공고 URL (첫 번째 링크)
                 job_url = links[0].get('href', '')
                 if job_url and not job_url.startswith('http'):
                     job_url = urljoin(self.BASE_URL, job_url)
@@ -95,10 +95,10 @@ class JobKoreaCrawler(BaseCrawler):
                 if len(text_links) < 2:
                     continue
                 
-                # 텍스트 길이로 정렬 (긴 것이 채용 제목, 짧은 것이 회사명)
+                # 텍스트 길이로 정렬 (긴 것 = 채용 제목, 짧은 것 = 회사명)
                 text_links.sort(key=lambda x: len(x[0]), reverse=True)
-                job_title = text_links[0][0]  # 가장 긴 텍스트 = 채용 제목
-                company_name = text_links[-1][0]  # 가장 짧은 텍스트 = 회사명
+                job_title = text_links[0][0]
+                company_name = text_links[-1][0]
                 
                 if not company_name or company_name in seen_companies:
                     continue
@@ -107,7 +107,7 @@ class JobKoreaCrawler(BaseCrawler):
                 
                 companies.append({
                     'company_name': company_name,
-                    'company_url': None,  # 나중에 GI_Read 페이지에서 Co_Read URL 추출
+                    'company_url': None,  # GI_Read 페이지에서 Co_Read URL 추출 필요
                     'job_url': job_url,
                     'job_title': job_title,
                     'homepage': None,
@@ -122,16 +122,18 @@ class JobKoreaCrawler(BaseCrawler):
     
     async def get_company_detail(self, company_url: str) -> Dict[str, Any]:
         """
-        회사 상세 페이지(Co_Read)에서 홈페이지 URL 추출
+        회사 프로필 페이지(/Company/{id})에서 홈페이지 URL 추출
         
         Args:
-            company_url: 회사 상세 페이지 URL (Co_Read/C/{id})
+            company_url: 회사 프로필 페이지 URL (/Company/{id})
         
         Returns:
             {'homepage': 홈페이지 URL 또는 None}
         """
+        print(f"[DEBUG] Fetching company page: {company_url}")
         html = await self.fetch(company_url)
         if not html:
+            print(f"[DEBUG] Failed to fetch company page: {company_url}")
             return {'homepage': None}
         
         soup = BeautifulSoup(html, 'lxml')
@@ -146,25 +148,58 @@ class JobKoreaCrawler(BaseCrawler):
             'daum.net', 'kakao.com', 'nicebizinfo.com', 'dataline.co.kr'
         ]
         
-        # 방법 1: 홈페이지 텍스트가 있는 링크 찾기
-        for elem in soup.find_all(string=lambda t: t and '홈페이지' in t):
-            parent = elem.parent
-            next_link = parent.find_next('a', href=True)
-            if next_link:
-                href = next_link.get('href', '')
-                if href.startswith('http') and not any(d in href for d in exclude_domains):
-                    homepage = href
-                    break
+        # 방법 1: "홈페이지" 라벨 근처의 링크 찾기 (기업정보 테이블 구조)
+        homepage_labels = soup.find_all(string=lambda t: t and '홈페이지' in t)
+        for label in homepage_labels:
+            # 부모 요소에서 가장 가까운 링크 찾기
+            parent = label.parent
+            if parent:
+                # 같은 행이나 다음 요소에서 링크 찾기
+                for ancestor in [parent, parent.parent, parent.parent.parent if parent.parent else None]:
+                    if not ancestor:
+                        continue
+                    links = ancestor.find_all('a', href=True)
+                    for link in links:
+                        href = link.get('href', '')
+                        # URL 정리: 첫 번째 유효한 URL만 추출
+                        if href.startswith('http'):
+                            # 공백이나 /로 구분된 여러 URL이 있을 수 있음
+                            first_url = href.split()[0].split(' / ')[0].strip()
+                            if not any(d in first_url for d in exclude_domains):
+                                homepage = first_url
+                                print(f"[DEBUG] Found homepage near label: {homepage}")
+                                break
+                    if homepage:
+                        break
+            if homepage:
+                break
         
-        # 방법 2: 외부 링크 중 첫 번째 유효한 링크
+        # 방법 2: 텍스트로 URL 직접 찾기 (http://www.example.com 형식)
+        if not homepage:
+            url_pattern = re.compile(r'https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[^\s<>"\']*')
+            for text in soup.stripped_strings:
+                if text.startswith('http'):
+                    match = url_pattern.search(text)
+                    if match:
+                        url = match.group(0)
+                        if not any(d in url for d in exclude_domains):
+                            homepage = url
+                            print(f"[DEBUG] Found homepage in text: {homepage}")
+                            break
+        
+        # 방법 3: 외부 링크 중 유효한 링크 (마지막 수단)
         if not homepage:
             for link in soup.select('a[href^="http"]'):
                 href = link.get('href', '')
                 if not any(d in href for d in exclude_domains):
-                    homepage = href
-                    break
+                    # URL 정리
+                    first_url = href.split()[0].split(' / ')[0].strip()
+                    if first_url.startswith('http'):
+                        homepage = first_url
+                        print(f"[DEBUG] Found homepage via fallback: {homepage}")
+                        break
         
-        print(f"[DEBUG] JobKorea found homepage: {homepage}")
+        print(f"[DEBUG] Final homepage result: {homepage}")
         return {'homepage': homepage}
     
     async def _get_company_url_from_job(self, job_url: str) -> Optional[str]:
