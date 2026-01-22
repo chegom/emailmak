@@ -18,9 +18,9 @@ class JobKoreaCrawler(BaseCrawler):
     BASE_URL = "https://www.jobkorea.co.kr"
     SEARCH_URL = "https://www.jobkorea.co.kr/Search/"
     
-    def __init__(self, timeout: float = 10.0):
+    def __init__(self, timeout: float = 15.0):
         super().__init__(timeout)
-        self.email_extractor = EmailExtractor(timeout=8.0)
+        self.email_extractor = EmailExtractor(timeout=10.0)
     
     async def search(self, keyword: str, start_page: int = 1, end_page: int = 5) -> List[Dict[str, Any]]:
         """
@@ -177,9 +177,13 @@ class JobKoreaCrawler(BaseCrawler):
         Returns:
             회사 상세 페이지 URL 또는 None
         """
+        print(f"[DEBUG] Fetching job page: {job_url}")
         html = await self.fetch(job_url)
         if not html:
+            print(f"[DEBUG] Failed to fetch job page: {job_url}")
             return None
+        
+        print(f"[DEBUG] Job page fetched, length: {len(html)}")
         
         # Co_Read URL 패턴 찾기
         co_read_pattern = r'/Recruit/Co_Read/C/(\d+)'
@@ -187,8 +191,11 @@ class JobKoreaCrawler(BaseCrawler):
         
         if match:
             company_id = match.group(1)
-            return f"{self.BASE_URL}/Recruit/Co_Read/C/{company_id}"
+            company_url = f"{self.BASE_URL}/Recruit/Co_Read/C/{company_id}"
+            print(f"[DEBUG] Found company URL: {company_url}")
+            return company_url
         
+        print(f"[DEBUG] Co_Read pattern not found in job page")
         return None
     
     async def crawl_with_emails(self, keyword: str, start_page: int = 1, end_page: int = 5, 

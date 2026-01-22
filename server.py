@@ -143,7 +143,9 @@ async def crawl_stream(request: CrawlRequest):
                         await asyncio.sleep(0.3)
                         
                     except Exception as e:
-                        print(f"[ERROR] {company['company_name']}: {e}")
+                        error_msg = f"[ERROR] {company.get('company_name', 'Unknown')}: {type(e).__name__}: {e}"
+                        print(error_msg)
+                        company['error'] = str(e)  # 에러 정보를 company에 추가
                         yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'company': company}, ensure_ascii=False)}\n\n"
                 
                 # 완료 메시지
