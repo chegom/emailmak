@@ -277,6 +277,11 @@ function getSourceLinks(company) {
         if (company.company_url) {
             links += `<a href="${escapeHtml(company.company_url)}" target="_blank" class="link-btn">🏢 회사정보</a>`;
         }
+    } else if (source === 'wanted') {
+        // 원티드
+        if (company.company_url) {
+            links += `<a href="${escapeHtml(company.company_url)}" target="_blank" class="link-btn">🇼 원티드</a>`;
+        }
     } else {
         // 사람인
         if (company.company_url) {

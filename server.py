@@ -68,6 +68,8 @@ async def crawl(request: CrawlRequest):
             crawler_class = SaraminCrawler
         elif request.source == "jobkorea":
             crawler_class = JobKoreaCrawler
+        elif request.source == "wanted":
+            crawler_class = WantedCrawler
         else:
             raise HTTPException(status_code=400, detail=f"지원하지 않는 소스: {request.source}")
         
@@ -105,6 +107,8 @@ async def crawl_stream(request: CrawlRequest):
                 crawler_class = SaraminCrawler
             elif request.source == "jobkorea":
                 crawler_class = JobKoreaCrawler
+            elif request.source == "wanted":
+                crawler_class = WantedCrawler
             else:
                 yield f"data: {json.dumps({'type': 'error', 'message': f'지원하지 않는 소스: {request.source}'})}\n\n"
                 return
