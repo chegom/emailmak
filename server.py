@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from crawlers import SaraminCrawler
 from crawlers.jobkorea import JobKoreaCrawler
+from crawlers.wanted import WantedCrawler
 
 
 app = FastAPI(
