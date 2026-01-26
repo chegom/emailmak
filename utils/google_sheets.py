@@ -35,15 +35,18 @@ class GoogleSheetExporter:
         except:
             return None
 
-    def export_to_sheet(self, sheet_url: str, data: List[Dict[str, Any]], sheet_name: str = "시트1"):
+    def export_to_sheet(self, sheet_url: str, data: List[Dict[str, Any]], keyword: str, source: str):
         """
-        데이터를 구글 시트에 내보내기
+        데이터를 구글 시트에 내보내기 (새 시트 추가 모드)
         
         Args:
             sheet_url: 구글 시트 전체 URL
             data: 회사 정보 리스트
-            sheet_name: 데이터를 쓸 시트(탭) 이름 (기본값: '시트1')
+            keyword: 검색어
+            source: 검색 출처 (예: 사람인, 잡코리아)
         """
+        from datetime import datetime
+        
         if not self.client:
             self.authenticate()
             
@@ -51,12 +54,21 @@ class GoogleSheetExporter:
             # 시트 열기
             doc = self.client.open_by_url(sheet_url)
             
-            # 워크시트 선택 또는 생성
-            try:
-                worksheet = doc.worksheet(sheet_name)
-            except gspread.WorksheetNotFound:
-                # 시트가 없으면 생성 (행 1000개, 열 20개)
-                worksheet = doc.add_worksheet(title=sheet_name, rows=1000, cols=20)
+            # 1. 시트 이름 생성 (예: 물류_사람인_20250126)
+            date_str = datetime.now().strftime("%Y%m%d")
+            base_title = f"{keyword}_{source}_{date_str}"
+            sheet_title = base_title
+            
+            # 2. 중복 이름 처리 (이미 있으면 (1), (2) 붙임)
+            counter = 1
+            existing_titles = [ws.title for ws in doc.worksheets()]
+            
+            while sheet_title in existing_titles:
+                sheet_title = f"{base_title} ({counter})"
+                counter += 1
+                
+            # 3. 새 워크시트 생성
+            worksheet = doc.add_worksheet(title=sheet_title, rows=max(100, len(data) + 20), cols=20)
                 
             # 헤더 준비
             headers = ["회사명", "채용공고 제목", "대표 이메일", "추가 이메일", "홈페이지", "채용사이트 링크", "기업정보 링크", "수집 출처"]
@@ -79,18 +91,16 @@ class GoogleSheetExporter:
                     company.get('source', '')
                 ])
                 
-            # 기존 데이터 지우고 새로 쓰기 (또는 append 모드로 변경 가능)
-            # 여기서는 헤더 + 데이터를 덮어쓰는 방식으로 구현
-            worksheet.clear()
+            # 데이터 쓰기
             worksheet.update(range_name='A1', values=[headers] + rows)
             
-            # 헤더 스타일링 (선택사항)
+            # 헤더 스타일링
             worksheet.format("A1:H1", {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
             
-            return True, f"{len(rows)}개 회사가 '{doc.title} / {sheet_name}' 에 성공적으로 저장되었습니다."
+            return True, f"'{sheet_title}' 시트가 추가되었습니다. ({len(rows)}개 회사)"
             
         except Exception as e:
             return False, str(e)

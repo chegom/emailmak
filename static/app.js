@@ -418,6 +418,11 @@ async function exportToGoogleSheet() {
     sheetConfirmBtn.innerText = '내보내는 중...';
     sheetConfirmBtn.disabled = true;
 
+    // 현재 검색어와 출처 가져오기
+    const keyword = document.getElementById('keyword').value.trim() || '검색어없음';
+    const sourceSelect = document.getElementById('source');
+    const sourceText = sourceSelect.options[sourceSelect.selectedIndex].text;
+
     try {
         const response = await fetch('/api/export/sheet', {
             method: 'POST',
@@ -426,7 +431,9 @@ async function exportToGoogleSheet() {
             },
             body: JSON.stringify({
                 sheet_url: sheetUrl,
-                companies: results
+                companies: results,
+                keyword: keyword,
+                source: sourceText
             })
         });
 

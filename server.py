@@ -45,7 +45,35 @@ class ExportRequest(BaseModel):
     """구글 시트 내보내기 요청 모델"""
     sheet_url: str
     companies: List[Dict[str, Any]]
+    keyword: str = "검색어없음"
+    source: str = "기타"
 
+
+# ... (중략) ...
+
+
+@app.post("/api/export/sheet")
+async def export_sheet(request: ExportRequest):
+    """구글 시트로 데이터 내보내기"""
+    try:
+        exporter = GoogleSheetExporter()
+        # 수정된 인터페이스 사용
+        success, message = exporter.export_to_sheet(
+            request.sheet_url, 
+            request.companies, 
+            request.keyword, 
+            request.source
+        )
+        
+        if success:
+            return {"success": True, "message": message}
+        else:
+            raise HTTPException(status_code=500, detail=message)
+            
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 class CompanyResult(BaseModel):
     """회사 결과 모델"""
@@ -275,7 +303,12 @@ async def export_sheet(request: ExportRequest):
     """구글 시트로 데이터 내보내기"""
     try:
         exporter = GoogleSheetExporter()
-        success, message = exporter.export_to_sheet(request.sheet_url, request.companies)
+        success, message = exporter.export_to_sheet(
+            request.sheet_url, 
+            request.companies, 
+            request.keyword, 
+            request.source
+        )
         
         if success:
             return {"success": True, "message": message}
