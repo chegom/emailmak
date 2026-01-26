@@ -4,7 +4,7 @@ FastAPI 기반 크롤링 API 서버
 """
 import asyncio
 import json
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from crawlers import SaraminCrawler
 from crawlers.jobkorea import JobKoreaCrawler
 from crawlers.wanted import WantedCrawler
+from utils.google_sheets import GoogleSheetExporter
 
 
 app = FastAPI(
@@ -38,6 +39,12 @@ class CrawlRequest(BaseModel):
     start_page: int = 1
     end_page: int = 5
     source: str = "saramin"  # 향후 확장용
+
+
+class ExportRequest(BaseModel):
+    """구글 시트 내보내기 요청 모델"""
+    sheet_url: str
+    companies: List[Dict[str, Any]]
 
 
 class CompanyResult(BaseModel):
@@ -261,6 +268,24 @@ async def debug_jobkorea(keyword: str = "개발자"):
         results["errors"].append(str(e))
     
     return results
+
+
+@app.post("/api/export/sheet")
+async def export_sheet(request: ExportRequest):
+    """구글 시트로 데이터 내보내기"""
+    try:
+        exporter = GoogleSheetExporter()
+        success, message = exporter.export_to_sheet(request.sheet_url, request.companies)
+        
+        if success:
+            return {"success": True, "message": message}
+        else:
+            raise HTTPException(status_code=500, detail=message)
+            
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # 정적 파일 서빙

@@ -89,6 +89,9 @@
                     <button id="exportBtn" class="btn-secondary">
                         <span>📥</span> CSV 내보내기
                     </button>
+                    <button id="googleSheetBtn" class="btn-success" style="background-color: #0F9D58; color: white;">
+                        <span>📊</span> 구글 시트
+                    </button>
                 </div>
             </div>
 
@@ -103,6 +106,22 @@
             <h3>검색어를 입력하고 크롤링을 시작하세요</h3>
             <p>사람인에서 회사 정보와 이메일을 자동으로 수집합니다</p>
         </section>
+    </div>
+
+    <!-- Google Sheet Modal -->
+    <div id="sheetModal" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <h3>구글 시트로 내보내기</h3>
+            <p class="modal-desc">데이터를 저장할 구글 시트 URL을 입력하세요.</p>
+            <p class="modal-note">* 서비스 계정이 시트에 '편집자' 권한으로 초대되어 있어야 합니다.</p>
+            <input type="text" id="sheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/..."
+                class="form-input" style="width: 100%; margin: 10px 0;">
+            <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+                <button id="sheetCancelBtn" class="btn-secondary">취소</button>
+                <button id="sheetConfirmBtn" class="btn-primary">내보내기</button>
+            </div>
+        </div>
     </div>
 
     <script src="/static/app.js"></script>
