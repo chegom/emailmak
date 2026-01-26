@@ -19,13 +19,6 @@ const resultsList = document.getElementById('resultsList');
 const totalCount = document.getElementById('totalCount');
 const emailCount = document.getElementById('emailCount');
 const exportBtn = document.getElementById('exportBtn');
-const googleSheetBtn = document.getElementById('googleSheetBtn');
-
-// Modal Elements
-const sheetModal = document.getElementById('sheetModal');
-const sheetUrlInput = document.getElementById('sheetUrlInput');
-const sheetCancelBtn = document.getElementById('sheetCancelBtn');
-const sheetConfirmBtn = document.getElementById('sheetConfirmBtn');
 
 const emptyState = document.getElementById('emptyState');
 const stopBtn = document.getElementById('stopBtn');
@@ -53,28 +46,6 @@ function initEventListeners() {
 
     // CSV 내보내기
     exportBtn.addEventListener('click', exportToCSV);
-
-    // 구글 시트 버튼
-    googleSheetBtn.addEventListener('click', () => {
-        if (results.length === 0) {
-            showToast('내보낼 결과가 없습니다.', 'warning');
-            return;
-        }
-        sheetModal.classList.remove('hidden');
-    });
-
-    // 모달 닫기
-    sheetCancelBtn.addEventListener('click', () => {
-        sheetModal.classList.add('hidden');
-    });
-
-    // 모달 오버레이 클릭 시 닫기
-    sheetModal.querySelector('.modal-overlay').addEventListener('click', () => {
-        sheetModal.classList.add('hidden');
-    });
-
-    // 구글 시트 내보내기 확정
-    sheetConfirmBtn.addEventListener('click', exportToGoogleSheet);
 
     // 정지 버튼 클릭
     stopBtn.addEventListener('click', stopCrawl);
@@ -390,52 +361,6 @@ function showProgress() {
 
 function hideProgress() {
     progressSection.classList.add('hidden');
-}
-
-/**
- * 구글 시트로 내보내기
- */
-async function exportToGoogleSheet() {
-    const sheetUrl = sheetUrlInput.value.trim();
-
-    if (!sheetUrl) {
-        showToast('유효한 구글 시트 URL을 입력해주세요.', 'warning');
-        return;
-    }
-
-    // 버튼 로딩 상태
-    const originalText = sheetConfirmBtn.innerText;
-    sheetConfirmBtn.innerText = '내보내는 중...';
-    sheetConfirmBtn.disabled = true;
-
-    try {
-        const response = await fetch('/api/export/sheet', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                sheet_url: sheetUrl,
-                companies: results
-            })
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            showToast(data.message, 'success');
-            sheetModal.classList.add('hidden');
-            sheetUrlInput.value = ''; // 초기화
-        } else {
-            showToast(data.detail || '내보내기에 실패했습니다.', 'error');
-        }
-    } catch (error) {
-        showToast('서버 연결 오류가 발생했습니다.', 'error');
-        console.error(error);
-    } finally {
-        sheetConfirmBtn.innerText = originalText;
-        sheetConfirmBtn.disabled = false;
-    }
 }
 
 function showResults() {
