@@ -373,15 +373,25 @@ function exportToCSV() {
         return;
     }
 
-    // CSV 헤더
-    const headers = ['회사명', '홈페이지', '이메일'];
+    // CSV 헤더 (구글 시트와 동일)
+    const headers = ['회사명', '채용공고 제목', '대표 이메일', '추가 이메일', '홈페이지', '채용사이트 링크', '기업정보 링크', '수집 출처', '수집 날짜'];
 
     // CSV 데이터
-    const rows = results.map(r => [
-        r.company_name || '',
-        r.homepage || '',
-        (r.emails || []).join('; ')
-    ]);
+    const today = new Date().toISOString().slice(0, 10);
+    const rows = results.map(r => {
+        const emails = r.emails || [];
+        return [
+            r.company_name || '',
+            r.job_title || '',
+            emails[0] || '',
+            emails.slice(1).join(', '),
+            r.homepage || '',
+            r.job_url || '',
+            r.company_url || '',
+            r.source || '',
+            today
+        ];
+    });
 
     // CSV 문자열 생성
     const csvContent = [

@@ -71,15 +71,16 @@ class GoogleSheetExporter:
             worksheet = doc.add_worksheet(title=sheet_title, rows=max(100, len(data) + 20), cols=20)
                 
             # 헤더 준비
-            headers = ["회사명", "채용공고 제목", "대표 이메일", "추가 이메일", "홈페이지", "채용사이트 링크", "기업정보 링크", "수집 출처"]
+            headers = ["회사명", "채용공고 제목", "대표 이메일", "추가 이메일", "홈페이지", "채용사이트 링크", "기업정보 링크", "수집 출처", "수집 날짜"]
             
             # 데이터 변환
+            today_str = datetime.now().strftime("%Y-%m-%d")
             rows = []
             for company in data:
                 emails = company.get('emails', [])
                 primary_email = emails[0] if emails else ""
                 other_emails = ", ".join(emails[1:]) if len(emails) > 1 else ""
-                
+
                 rows.append([
                     company.get('company_name', ''),
                     company.get('job_title', ''),
@@ -88,19 +89,72 @@ class GoogleSheetExporter:
                     company.get('homepage', ''),
                     company.get('job_url', ''),
                     company.get('company_url', ''),
-                    company.get('source', '')
+                    company.get('source', ''),
+                    today_str
                 ])
                 
             # 데이터 쓰기
             worksheet.update(range_name='A1', values=[headers] + rows)
-            
+
             # 헤더 스타일링
-            worksheet.format("A1:H1", {
+            worksheet.format("A1:I1", {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
-            
-            return True, f"'{sheet_title}' 시트가 추가되었습니다. ({len(rows)}개 회사)"
+
+            # 4. 발송명단 시트에 데이터 추가
+            append_msg = self._append_to_mailing_list(doc, rows)
+
+            return True, f"'{sheet_title}' 시트가 추가되었습니다. ({len(rows)}개 회사) / {append_msg}"
             
         except Exception as e:
             return False, str(e)
+
+    def _append_to_mailing_list(self, doc, rows: List[List[str]]) -> str:
+        """
+        '발송명단' 시트의 마지막 행 아래에 데이터 추가
+
+        Args:
+            doc: gspread 스프레드시트 객체
+            rows: 추가할 데이터 행 리스트
+
+        Returns:
+            결과 메시지
+        """
+        try:
+            mailing_sheet = doc.worksheet("발송명단")
+        except gspread.exceptions.WorksheetNotFound:
+            return "발송명단 시트를 찾을 수 없습니다"
+
+        # 기존 데이터의 마지막 행 찾기
+        existing = mailing_sheet.get_all_values()
+        next_row = len(existing) + 1
+
+        # 데이터 추가
+        mailing_sheet.update(
+            range_name=f'A{next_row}',
+            values=rows
+        )
+
+        # 대표 이메일(C열) 기준 필터 적용 - 공백 행 숨김
+        sheet_id = mailing_sheet.id
+        doc.batch_update({"requests": [
+            {"clearBasicFilter": {"sheetId": sheet_id}},
+            {"setBasicFilter": {
+                "filter": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 0,
+                        "startColumnIndex": 0,
+                        "endColumnIndex": 9
+                    },
+                    "criteria": {
+                        "2": {
+                            "condition": {"type": "NOT_BLANK"}
+                        }
+                    }
+                }
+            }}
+        ]})
+
+        return f"발송명단에 {len(rows)}개 추가됨 (이메일 필터 적용)"
