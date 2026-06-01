@@ -169,3 +169,37 @@ class WantedCrawler(BaseCrawler):
         except Exception as e:
             print(f"[ERROR] API request error: {e}")
             return None
+
+    async def crawl_with_emails(
+        self,
+        keyword: str,
+        start_page: int = 1,
+        end_page: int = 5,
+        progress_callback=None
+    ) -> List[Dict[str, Any]]:
+        """검색부터 이메일 추출까지 전체 크롤링."""
+        companies = await self.search(keyword, start_page, end_page)
+        total = len(companies)
+
+        print(f"[INFO] Wanted found {total} companies (pages {start_page}-{end_page}). Extracting details...")
+
+        for idx, company in enumerate(companies):
+            try:
+                if progress_callback:
+                    progress_callback(idx + 1, total, company['company_name'])
+
+                detail = await self.get_company_detail(company.get('api_id') or company['company_url'])
+                company['homepage'] = detail.get('homepage')
+
+                if company.get('homepage'):
+                    emails = await self.email_extractor.extract_from_url(company['homepage'])
+                    company['emails'] = emails
+
+                await asyncio.sleep(0.3)
+
+            except Exception as e:
+                print(f"[ERROR] Failed to process {company['company_name']}: {e}")
+                continue
+
+        companies.sort(key=lambda x: len(x.get('emails', [])), reverse=True)
+        return companies
