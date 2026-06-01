@@ -6,15 +6,22 @@ import asyncio
 import json
 import os
 from typing import Optional, List, Dict, Any
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 
 from crawlers import SaraminCrawler
 from crawlers.jobkorea import JobKoreaCrawler
 from crawlers.wanted import WantedCrawler
+from engine.db import Base as EngineBase
+from engine.db import SessionLocal as EngineSessionLocal
+from engine.db import engine as engine_state_engine
+import engine.models  # noqa: F401
+from engine.scheduler import acquire_lock, clear_stale_locks, due_rows, lock_key, release_lock
 from utils.google_sheets import GoogleSheetExporter
 
 
@@ -23,6 +30,143 @@ app = FastAPI(
     description="사람인 등 채용사이트에서 회사 이메일을 크롤링하는 API",
     version="1.0.0"
 )
+
+_engine_scheduler = None
+
+
+@app.on_event("startup")
+async def _start_engine():
+    """Start the sheet-driven automation scheduler when engine env is configured."""
+    global _engine_scheduler
+    if os.getenv("ENGINE_ENABLED", "1") != "1":
+        return
+
+    try:
+        from datetime import datetime, timedelta
+        from engine.settings import get_engine_settings
+
+        get_engine_settings()
+        EngineBase.metadata.create_all(engine_state_engine)
+        with EngineSessionLocal() as session:
+            clear_stale_locks(session, before=datetime.utcnow() - timedelta(hours=6))
+
+        _engine_scheduler = AsyncIOScheduler(timezone="Asia/Seoul")
+        _engine_scheduler.add_job(
+            _run_tick,
+            "interval",
+            hours=1,
+            max_instances=1,
+            coalesce=True,
+            id="hourly_tick",
+        )
+        _engine_scheduler.start()
+    except Exception as exc:
+        print(f"[WARN] Engine scheduler not started: {exc}")
+
+
+@app.on_event("shutdown")
+async def _stop_engine():
+    global _engine_scheduler
+    if _engine_scheduler:
+        _engine_scheduler.shutdown(wait=False)
+        _engine_scheduler = None
+
+
+@app.get("/healthz")
+async def healthz():
+    ok = True
+    try:
+        with EngineSessionLocal() as session:
+            session.execute(text("SELECT 1"))
+    except Exception:
+        ok = False
+    return {"ok": ok}
+
+
+async def _run_tick():
+    from datetime import datetime
+
+    from engine.alerts import AlertMonitor
+    from engine.crawler_service import CrawlerService
+    from engine.dedup import DedupStore
+    from engine.gemini import GeminiClient
+    from engine.keywords import KeywordResolver
+    from engine.pipeline import RunPipeline
+    from engine.planner import SchedulePlanner
+    from engine.settings import get_engine_settings
+    from engine.sheets import SheetControl, open_control_sheet
+    from engine.smartlead import SmartleadClient
+    from engine.validator import EmailValidator
+
+    cfg = get_engine_settings()
+    spreadsheet = open_control_sheet(cfg.google_credentials_json, cfg.control_sheet_url)
+    sheet = SheetControl(spreadsheet)
+    gemini = GeminiClient(api_key=cfg.gemini_api_key)
+    resolver = KeywordResolver(gemini=gemini)
+    smartlead = SmartleadClient(api_key=cfg.smartlead_api_key)
+
+    settings = sheet.read_settings()
+    SchedulePlanner(sheet, resolver).topup(settings)
+
+    now = datetime.now()
+    run_id = now.strftime("%Y%m%d%H%M")
+    by_industry = {job.industry: job for job in settings}
+
+    for row in due_rows(sheet.read_schedule(), now):
+        job = by_industry.get(row.industry)
+        if not job:
+            continue
+
+        key = lock_key(row)
+        with EngineSessionLocal() as session:
+            if not acquire_lock(session, key):
+                continue
+
+        try:
+            if not row.keyword:
+                keywords, source = resolver.resolve(
+                    industry=job.industry,
+                    manual="",
+                    avoid=[],
+                    n=job.topup_count,
+                )
+                row.keyword = ", ".join(keywords)
+                sheet.set_schedule_keyword(row.row_number, row.keyword, source)
+
+            with EngineSessionLocal() as session:
+                alert = AlertMonitor(
+                    session,
+                    smartlead,
+                    sheet,
+                    warn=cfg.bounce_warn,
+                    critical=cfg.bounce_critical,
+                    min_sample=cfg.min_bounce_sample,
+                )
+                pipeline = RunPipeline(
+                    session=session,
+                    crawler=CrawlerService(),
+                    validator=EmailValidator(session),
+                    dedup=DedupStore(session),
+                    smartlead=smartlead,
+                    sheet=sheet,
+                    alert=alert,
+                    min_pass_rate=cfg.min_pass_rate,
+                )
+                await pipeline.run_row(run_id=run_id, row=row, job=job)
+        finally:
+            with EngineSessionLocal() as session:
+                release_lock(session, key)
+
+    with EngineSessionLocal() as session:
+        alert = AlertMonitor(
+            session,
+            smartlead,
+            sheet,
+            warn=cfg.bounce_warn,
+            critical=cfg.bounce_critical,
+            min_sample=cfg.min_bounce_sample,
+        )
+        alert.poll_bounce(run_id=run_id, campaign_ids=list({job.campaign_id for job in settings}))
 
 def _get_cors_origins() -> List[str]:
     origins = os.getenv(
