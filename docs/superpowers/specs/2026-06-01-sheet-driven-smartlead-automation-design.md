@@ -50,12 +50,14 @@
 | 키워드 | 하이브리드 — 예정 행 수동 입력 우선, 비면 **Gemini 2.5 Flash** 자동 생성(최근 사용 회피) |
 | 검증 | **MX + 문법 + 시스템주소/일회용 제외** (역할주소는 포함) |
 | 역할주소 정책 | `recruit@ hr@ info@ sales@ contact@` 등 업무용 역할주소 **포함**(주 타깃), `no-reply@ postmaster@ mailer-daemon@ noreply@ donotreply@` 등 시스템주소만 제외. 시트에 역할주소 여부 표시 |
-| 중복 제거 | `발송내역` 시트 이메일 대조 + 로컬 캐시 + Smartlead `ignore_duplicate` 옵션 ON |
-| Smartlead 푸시 | 캠페인에 리드 배치 투입(요청당 최대 100) |
+| 중복 제거 | `발송내역`의 **`push_status=accepted` 행만** 기준 + 로컬 캐시. 수집됐으나 미푸시(suspended/failed/skipped)는 dedup에서 **제외** → 다음 실행 재시도 가능 |
+| Smartlead 푸시 | 캠페인에 리드 배치 투입(요청당 최대 100). 옵션은 공식 파라미터명으로 명시(§9) |
 | 경고 방식 | **폴링** — 매 실행 시 Smartlead 캠페인 통계 조회 (공개 웹훅 불필요) |
-| 임계치 | bounce율 ≥5% ⚠️경고 / ≥8% 🚨심각(다음 자동 푸시 일시중단). 검증 통과율 <40% ⚠️. 크롤 0건 ⚠️ |
+| 임계치 | **이번 구간(delta·최소표본)** bounce율 ≥5% ⚠️경고 / ≥8% 🚨심각(자동 푸시 중단). 검증 통과율 <40% ⚠️. 크롤 0건 ⚠️ |
 | 컨트롤 패널 | Google Sheets 1장 (`⚙️설정` / `📅키워드스케줄` / `발송내역` / `⚠️경고` 탭) |
-| 상태 저장 | 경량 SQLite(Railway 볼륨) — dedup 캐시 + 엔진 상태. 시트가 사람용 source, DB는 엔진 내부용 |
+| 상태 저장 | 경량 SQLite(Railway 볼륨) — dedup 캐시 + 엔진 상태 + 실행 락. 시트가 사람용 source, DB는 엔진 내부용 |
+| 동시실행 방지 | APScheduler `max_instances=1, coalesce=True` + 행 상태 `예정→running→완료` 전이(SQLite `run_lock`) |
+| 엔진 설정 | `app/config`(OAuth 필수)와 **분리한 `EngineSettings`** — OAuth env 없이 부팅 |
 | 시크릿 | `SMARTLEAD_API_KEY`, `GEMINI_API_KEY` 환경변수. `GOOGLE_CREDENTIALS_JSON` 재사용 |
 
 ---
@@ -67,8 +69,8 @@
 │  ⚙️설정     (사람 입력) : 산업군, 사이트, 캠페인ID, 주기(일), 미리채울회수N, 활성화 │
 │  📅키워드스케줄 (양방향): 예정일, 산업군, 키워드, 출처(ai/manual), 상태(예정/완료) │
 │                          └ AI가 앞으로 N회분 미리 채움. 사람이 고치면 manual로 나감 │
-│  발송내역    (엔진 기록): 푸시일시, 회사, 이메일, 산업군, 키워드, 사이트, 캠페인,    │
-│                          검증결과, 역할주소여부   ← 중복제거 기준                   │
+│  발송내역    (엔진 기록): 기록일시, 회사, 이메일, …, 검증결과, 역할주소여부,         │
+│                          push_status(accepted/skipped/failed/suspended) ← dedup=accepted│
 │  ⚠️경고      (엔진 기록): 일시, 종류, 상세, 수치                                    │
 └───────────────────────────────────────────────────────────────────────────────────┘
         ▲ 읽기(⚙️설정·📅스케줄·발송내역)          │ 쓰기(📅스케줄 채움/상태, 발송내역, ⚠️경고)
@@ -79,7 +81,7 @@
 │    └─ for each 도래행(예정일≤now, 상태=예정) in 📅키워드스케줄:                      │
 │         RunPipeline.execute(row):                                                   │
 │           1) SheetControl.read_settings()      ⚙️설정에서 사이트/캠페인/페이지 매칭 │
-│           2) KeywordResolver.resolve(row)      manual 우선 / 비면 GeminiClient      │
+│           2) KeywordResolver.resolve(row)      키워드 있으면 그대로 / 비면 Gemini   │
 │           3) CrawlerService.crawl()            기존 saramin/jobkorea/wanted 재사용  │
 │           4) EmailValidator.validate()         MX + 문법 + 시스템/일회용 제외        │
 │           5) DedupStore.filter_new()           발송내역 + 로컬 캐시 대조            │
@@ -88,7 +90,7 @@
 │           8) AlertMonitor.check()              Smartlead 통계 폴링 → ⚠️경고 판정    │
 │                                                                                    │
 │  외부:  Gemini API (키워드)   |   Smartlead API (리드/통계)   |   기존 봇 시트계정  │
-│  상태:  SQLite(/data/state.db) — pushed_email 캐시, mx 캐시, 엔진 상태             │
+│  상태:  SQLite(/data/state.db) — pushed_email(accepted), mx 캐시, run_lock, snapshot│
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -97,7 +99,7 @@
 - **SchedulePlanner**: `📅키워드스케줄`이 N회분 미만이면 미래 행을 생성. 날짜는 `주기(일)` 간격, 키워드는 Gemini가 산업군별로(최근 사용 회피). 이미 있는 manual 행은 보존.
 - **KeywordResolver**: 실행 행의 키워드 결정 — manual 있으면 그대로, 없으면 GeminiClient(산업군 + 회피목록).
 - **GeminiClient**: 산업군 + 회피목록 → 키워드 N개. 모델 `gemini-2.5-flash`. 실패 시 빈 결과 → ⚠️경고 + 해당 행 보류.
-- **CrawlerService**: 기존 크롤러 통합. 시그니처 변경 없음.
+- **CrawlerService**: 크롤러 통합 어댑터. ⚠️ **선행 수정 필요** — `WantedCrawler`에 `crawl_with_emails()`가 없어 wanted 선택 시 크래시(server.py:108 `crawl_with_emails` 가정 vs crawlers/wanted.py는 `search`/`get_company_detail`/`fetch_json`만 보유; saramin·jobkorea엔 존재). `search → get_company_detail → extract_emails` 공통 어댑터로 묶거나 `WantedCrawler.crawl_with_emails()`를 추가해 시그니처를 통일한다.
 - **EmailValidator**: 도메인 MX 조회(dnspython, 7일 캐시) + 문법 + 시스템주소/일회용 도메인 제외. **SMTP 핸드셰이크 안 함.**
 - **DedupStore**: `발송내역` 이메일 집합 + 로컬 SQLite 캐시로 이미 푸시된 주소 제외.
 - **SmartleadClient**: `POST /api/v1/campaigns/{id}/leads`(배치) + 통계 조회. 4xx/401/429/5xx 분기.
@@ -129,16 +131,19 @@
 
 | 열 | 예시 | 설명 |
 |----|------|------|
-| 예정일 | `2026-06-04` | 이 날짜 도래 시 실행 (시간 09:00 기본, 시트값 우선) |
+| 예정일시 | `2026-06-04 09:00` | 도래 시 실행. **날짜만 입력하면 Asia/Seoul 09:00로 파싱** |
 | 산업군 | `물류` | `⚙️설정` 행과 매칭 |
-| 키워드 | `3PL, 풀필먼트` | 비우면 실행 시 AI가 채움. 사람이 적으면 그대로 |
-| 출처 | `ai` / `manual` | 사람이 키워드를 고치면 `manual`로 표시(엔진이 덮어쓰지 않음) |
-| 상태 | `예정` / `✅완료` / `보류` | 엔진이 갱신. `보류`=AI/크롤 실패 |
+| 키워드 | `3PL, 풀필먼트` | 비우면 실행/top-up 시 AI가 채움. 적혀 있으면 그대로 사용 |
+| 출처 | `ai` / `manual` | **표시용일 뿐.** 보호 기준 아님 |
+| 상태 | `예정` / `running` / `✅완료` / `보류` | 엔진이 갱신. `running`=처리중(락), `보류`=AI/크롤 실패 |
 
-- 규칙: `상태=예정` & `출처=manual` 행은 엔진이 **키워드를 절대 덮어쓰지 않음**. `출처=ai`이고 아직 키워드가 빈 행은 실행 시점(또는 top-up 시) 채움.
+- **키워드 보호 규칙(개정)**: **키워드 칸이 비어 있지 않으면 엔진은 절대 덮어쓰지 않는다.** 사람이 `출처`를 안 바꿔도 안전(출처는 표시용). 엔진은 `키워드`가 빈 `예정` 행만 채우고 그때 `출처=ai`로 표시.
 - `완료` 행이 곧 **사용 키워드 이력** → 별도 이력 탭 불필요. SchedulePlanner는 이 이력을 회피목록으로 사용.
 
-**`발송내역`** — 엔진 기록(append). **중복제거 기준.** 열: `푸시일시, 실행ID, 회사명, 이메일, 산업군, 키워드, 사이트, 캠페인ID, 검증결과(pass/role), 역할주소여부`.
+**`발송내역`** — 엔진 기록(append). 열: `기록일시, 실행ID, 회사명, 이메일, 산업군, 키워드, 사이트, 캠페인ID, 검증결과(pass/role), 역할주소여부, push_status, accepted_at, smartlead_응답요약`.
+- `push_status` ∈ `accepted` / `skipped`(이미 dedup됨) / `failed`(API오류) / `suspended`(회로차단으로 미푸시).
+- **dedup은 `push_status=accepted` 행만 기준** — 미푸시 이메일이 "발송됨"으로 오인되지 않음.
+- (선택) 수집내역과 발송내역을 굳이 더 나누지 않고, `push_status`로 한 탭에서 구분.
 
 **`⚠️경고`** — 엔진 기록(append). 열: `일시, 실행ID, 종류, 상세, 수치`.
 - 종류: `crawl_zero` / `low_pass_rate` / `bounce_warn` / `bounce_critical` / `api_error` / `settings_invalid`.
@@ -148,12 +153,12 @@
 
 ```sql
 CREATE TABLE engine_state (
-  key   TEXT PRIMARY KEY,            -- 'suspended:<campaign_id>' 등
+  key   TEXT PRIMARY KEY,            -- 'suspended:<cid>', 'bounce_snapshot:<cid>'(JSON {sent,bounced})
   value TEXT
 );
 
 CREATE TABLE pushed_emails (
-  email        TEXT PRIMARY KEY,      -- 정규화(소문자) 이메일
+  email        TEXT PRIMARY KEY,      -- 정규화(소문자) 이메일. accepted만 적재
   domain       TEXT,
   campaign_id  TEXT,
   pushed_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -165,9 +170,17 @@ CREATE TABLE mx_cache (
   mx_valid   BOOLEAN,
   checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP   -- TTL 7일
 );
+
+CREATE TABLE run_lock (
+  row_key    TEXT PRIMARY KEY,        -- 📅스케줄 행 식별(산업군 + 예정일시)
+  locked_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-부팅 시 `pushed_emails`가 비어 있으면(볼륨 초기화 등) `발송내역` 시트에서 1회 backfill. **스케줄 상태(다음 실행 시점)는 시트 `📅키워드스케줄`이 source** — 재시작에도 시트만 보면 됨(로컬 스케줄 상태 불필요).
+- 부팅 시 `pushed_emails`가 비어 있으면(볼륨 초기화 등) `발송내역`의 **`push_status=accepted` 행만** 1회 backfill.
+- **스케줄 상태(다음 실행 시점)는 시트 `📅키워드스케줄`이 source** — 재시작에도 시트만 보면 됨.
+- 부팅 시 오래된 `run_lock`·`상태=running` 행은 정리(고아 락 해제) 후 시작.
+- bounce 판단은 누적이 아니라 `bounce_snapshot`과의 **delta**로(§5) — 과거 누적 바운스로 인한 오탐 방지.
 
 ### 4.3 시크릿 보호
 - `SMARTLEAD_API_KEY`, `GEMINI_API_KEY`는 환경변수에서만 읽고 로그에 마스킹(`sk-***...xyz`).
@@ -187,28 +200,34 @@ HourlyTick():                                    # APScheduler interval=1h, Asia
            마지막 예정일 + 주기(일) 간격으로 부족분 행 생성
            각 행 키워드 = Gemini(산업군, 회피목록=완료이력+기존예정) ; 출처=ai
        (manual 행·기존 예정 행은 건드리지 않음)
-  3. due = 📅키워드스케줄 중 (예정일 ≤ now AND 상태=예정)
+  3. due = 📅키워드스케줄 중 (예정일시 ≤ now AND 상태=예정)   # 날짜만이면 09:00(Asia/Seoul)
   4. for each row in due:
-       a. keywords = KeywordResolver.resolve(row)         # manual 우선, 비면 Gemini
-            실패 → 상태=보류 + ⚠️경고(api_error), continue
-            (ai로 채웠으면 그 키워드를 시트 row에 기록)
+       0) run_lock 획득(있으면 다른 워커가 처리중 → skip). 행 상태 예정→running
+       a. keywords = KeywordResolver.resolve(row)         # 키워드 칸 있으면 그대로, 비면 Gemini
+            실패 → 상태=보류 + ⚠️경고(api_error), 락 해제, continue
+            (ai로 채웠으면 그 키워드를 시트 row에 기록, 출처=ai)
        b. job = settings[row.산업군]                       # 사이트/캠페인/페이지
        c. companies = CrawlerService.crawl(job.사이트, keywords, job.페이지)
             0건 → ⚠️경고(crawl_zero)
        d. (valid, dropped) = EmailValidator.validate(companies)
             통과율 < MIN_PASS_RATE → ⚠️경고(low_pass_rate)
-       e. fresh = DedupStore.filter_new(valid)
+       e. fresh = DedupStore.filter_new(valid)             # accepted 이력만 제외 기준
        f. if AlertMonitor.suspended(job.캠페인ID):        # 직전 bounce_critical
-            ⚠️경고("푸시 보류"), 푸시 skip (검증·기록만)
+            발송내역에 push_status=suspended로 기록(=미푸시, dedup 제외), ⚠️경고("푸시 보류")
           else:
             result = SmartleadClient.push_leads(job.캠페인ID, fresh)   # 배치 100
-            DedupStore.mark_pushed(result.accepted)
-       g. SheetRecorder.append_history(row, valid, result)
-          row.상태 = ✅완료
-  5. AlertMonitor.poll_bounce(active_campaigns):     # 캠페인별 통계
-       rate = bounced / max(sent,1)
-       rate ≥ BOUNCE_CRITICAL → ⚠️경고(bounce_critical) + suspend(campaign)
-       rate ≥ BOUNCE_WARN     → ⚠️경고(bounce_warn)
+            DedupStore.mark_pushed(result.accepted)        # accepted만 등록
+            # 미수락분은 push_status=failed/skipped → dedup 안 됨 → 다음 실행 재시도
+       g. SheetRecorder.append_history(row, valid, result) # 행별 push_status 기록
+          row.상태 = ✅완료, run_lock 해제
+  5. AlertMonitor.poll_bounce(active_campaigns):     # 캠페인별 통계 — delta 기준
+       snap = engine_state['bounce_snapshot:<cid>']  # 직전 {sent,bounced}
+       Δsent = sent - snap.sent ; Δbounced = bounced - snap.bounced
+       if Δsent ≥ MIN_BOUNCE_SAMPLE:                 # 최소 표본 충족 시에만 판정
+         rate = Δbounced / Δsent
+         rate ≥ BOUNCE_CRITICAL → ⚠️경고(bounce_critical) + suspend(campaign)
+         rate ≥ BOUNCE_WARN     → ⚠️경고(bounce_warn)
+       engine_state['bounce_snapshot:<cid>'] = {sent,bounced}
 ```
 
 ### 멱등성·재실행 안전성
@@ -223,14 +242,16 @@ HourlyTick():                                    # APScheduler interval=1h, Asia
 
 | # | 안전장치 | 위치 | 효과 |
 |---|---------|------|------|
-| 1 | bounce 회로차단 | AlertMonitor.poll_bounce | bounce율 ≥8%면 해당 캠페인 자동 푸시 중단 + 🚨경고 |
+| 1 | bounce 회로차단(delta) | AlertMonitor.poll_bounce | **이번 구간**(최소 표본 `MIN_BOUNCE_SAMPLE` 이상) bounce율 ≥8%면 캠페인 자동 푸시 중단 + 🚨경고. 과거 누적값 오탐 방지 |
 | 2 | 검증 통과율 가드 | EmailValidator 후 | <40%면 ⚠️경고 (키워드/사이트 품질 의심) |
 | 3 | 크롤 0건 감지 | CrawlerService 후 | 사이트 구조 변경/키워드 부적합 의심 → ⚠️경고 |
 | 4 | 시스템주소·일회용 제외 | EmailValidator | 무인 모드 강제 ON |
 | 5 | dedup 2중화 | DedupStore + Smartlead 옵션 | 동일 이메일 재발송 방지 |
 | 6 | 설정 검증 | SheetControl | 잘못된 사이트/캠페인/페이지/주기 → 행 skip + ⚠️경고 |
 | 7 | 일일 푸시 상한(선택) | SmartleadClient | `SMARTLEAD_DAILY_LIMIT` 초과분 다음 tick 이월 |
-| 8 | manual 행 보호 | SchedulePlanner | 사람이 적은 키워드/예정일을 엔진이 덮어쓰지 않음 |
+| 8 | 키워드 보호 | SchedulePlanner | **키워드 칸이 비어있지 않으면** 엔진이 절대 덮어쓰지 않음(출처 무관) |
+| 9 | 동시실행 락 | APScheduler + run_lock | `max_instances=1, coalesce=True` + 행 `running` 전이로 같은 due 행 중복 처리 방지 |
+| 10 | dedup 정확성 | DedupStore | `push_status=accepted`만 dedup 기준 → 미푸시 이메일 영구 제외 사고 방지 |
 
 > bounce_critical로 자동 중단된 캠페인 재개: `⚠️경고`를 보고 원인 처리 후 **재개 방법은 구현 계획에서 확정**(후보: `⚙️설정`에 재개 표시 / 쿨다운 자동 해제).
 
@@ -275,12 +296,31 @@ CONTROL_SHEET_URL          # 컨트롤 패널 시트 URL
 # 임계치 (기본값 있음, 선택) — 주기/N은 시트(⚙️설정)에서 관리
 BOUNCE_WARN=0.05
 BOUNCE_CRITICAL=0.08
+MIN_BOUNCE_SAMPLE=50        # delta 판정 최소 표본
 MIN_PASS_RATE=0.40
 SMARTLEAD_DAILY_LIMIT=200
 # 기존 재사용
 GOOGLE_CREDENTIALS_JSON     # 시트 읽기/쓰기 (봇 서비스계정)
 ```
 > 보안: 기존에 노출됐던 서비스계정 키(`crawler-bot@emailmarketing-485502`)는 폐기·재발급 권장(이전 작업의 후속).
+
+### 엔진 설정 분리 (OAuth 비의존)
+`app/config.py`는 `app_secret_key`·`google_oauth_client_id`·`google_oauth_client_secret`를 **필수**로 요구하고, `app/db.py`는 import 시 `get_settings()`를 호출한다(app/db.py:12,25). 이 엔진은 OAuth가 비목표이므로 그대로 쓰면 **OAuth env 없이는 부팅이 죽는다.** 따라서:
+- 엔진 전용 **`EngineSettings`**(필수: `SMARTLEAD_API_KEY`·`GEMINI_API_KEY`·`CONTROL_SHEET_URL`·`GOOGLE_CREDENTIALS_JSON`. OAuth 불필요)와 **엔진 전용 DB 세션**(`/data/state.db`)을 둔다.
+- 엔진은 멀티유저 진행작업(`app/config`·`app/db`)에 **의존하지 않는다** → Railway에서 OAuth env 없이 독립 부팅.
+
+### Smartlead API (공식 문서 기준 확정)
+- 리드 추가: `POST https://server.smartlead.ai/api/v1/campaigns/{campaign_id}/leads?api_key=…`
+  ```json
+  { "lead_list": [ { "email": "...", "first_name": "...", "company_name": "...",
+                     "custom_fields": { "job_title": "...", "source": "..." } } ],
+    "settings": { "ignore_global_block_list": true,
+                  "ignore_unsubscribe_list": true,
+                  "ignore_duplicate_leads_in_other_campaign": true } }
+  ```
+  요청당 최대 100건. 응답의 추가/중복/실패 카운트로 행별 `push_status` 판정.
+- 통계(폴링): 캠페인 statistics/analytics 엔드포인트에서 `sent`/`bounce` 카운트 수집.
+- 참고: api.smartlead.ai/api-reference/campaigns/add-leads , smartlead.readme.io/reference/add-leads-to-a-campaign-by-id
 
 ### 볼륨
 Railway `/data` 볼륨 추가, `state.db` 보관.
@@ -308,14 +348,15 @@ google-genai       # Gemini API (또는 google-generativeai)
 ### 단위 (pytest)
 | 대상 | 포인트 |
 |------|--------|
-| SchedulePlanner | N회분 top-up / 주기 간격 / manual·기존 예정 행 보존 / 회피목록 |
-| KeywordResolver | manual 우선 / 비면 Gemini / Gemini 실패 시 보류 |
+| CrawlerService | wanted 포함 3사 동일 인터페이스(crawl_with_emails) / 어댑터 |
+| SchedulePlanner | N회분 top-up / 주기 간격 / 비어있지 않은 키워드·기존 예정 행 보존 / 회피목록 |
+| KeywordResolver | 키워드 있으면 그대로 / 비면 Gemini / Gemini 실패 시 보류 |
 | EmailValidator | 문법 / MX 모킹 / 시스템주소·일회용 제외 / 역할주소 포함 / 캐시·TTL |
-| DedupStore | 발송내역 대조 / 정규화(소문자) / backfill |
-| SmartleadClient | 배치 분할(100) / 401·429·4xx·5xx 분기 / 통계 파싱 |
-| AlertMonitor | 임계치 경계값 / bounce_critical 시 suspend |
-| SheetControl | ⚙️설정·📅스케줄 파싱·검증(잘못된 행 skip) / 상태 갱신 |
-| 트리거 | 예정일 도래 판정 / 같은 행 2회 실행 안 됨 / Asia/Seoul |
+| DedupStore | **accepted만** 제외 기준 / suspended·failed는 재시도 가능 / 정규화 / backfill(accepted만) |
+| SmartleadClient | 배치 분할(100) / 공식 파라미터 / 401·429·4xx·5xx 분기 / 추가·중복·실패 → push_status |
+| AlertMonitor | **delta·최소표본** 경계값 / 누적 오탐 안 남 / bounce_critical 시 suspend |
+| SheetControl | ⚙️설정·📅스케줄 파싱·검증 / 예정일시 09:00 파싱 / 키워드 보호 규칙 / 상태 전이 |
+| 트리거/락 | 예정일시 도래 판정 / **run_lock으로 같은 due 행 동시·중복 실행 차단** / Asia/Seoul |
 
 ### 통합 (TestClient + `:memory:` SQLite)
 - HourlyTick 전체 1회 — 크롤/Gemini/Smartlead/Sheets 전부 mock, 예정표 top-up·도래행 실행·내역·경고 검증.
@@ -329,18 +370,20 @@ google-genai       # Gemini API (또는 google-generativeai)
 
 ## 11. 구현 단계 개요 (writing-plans에서 상세화)
 
-1. `services/` 모듈 분리 + SQLite `state.db`(engine_state/pushed_emails/mx_cache) + alembic.
-2. SheetControl — `⚙️설정`/`📅키워드스케줄` 읽기·검증 + `발송내역`/`⚠️경고` append + 상태 갱신 (GoogleSheetExporter 확장).
-3. EmailValidator — 문법 + MX(dnspython, 캐시) + 시스템주소/일회용 제외.
-4. DedupStore — 발송내역/캐시 대조 + backfill.
-5. GeminiClient + KeywordResolver(하이브리드).
-6. SchedulePlanner — 예정표 top-up(주기 간격, 회피목록, manual 보존).
-7. SmartleadClient — 리드 배치 푸시 + 통계 조회.
-8. AlertMonitor — 임계치 판정 + suspend + ⚠️경고 기록.
-9. HourlyTick + RunPipeline 조립 + APScheduler(1h, Asia/Seoul) 등록 + `/healthz`.
-10. 기존 코드 정돈(중복 라우트·CORS).
-11. 단위/통합 테스트 + 테스트 모드.
-12. Railway 배포(볼륨, 환경변수, 의존성) + 컨트롤 시트 템플릿 생성.
+0. **선행: WantedCrawler 호환** — `WantedCrawler.crawl_with_emails()` 추가 또는 CrawlerService 공통 어댑터(search→detail→extract)로 시그니처 통일. (지금 wanted는 `/api/crawl`에서 크래시)
+1. **EngineSettings 분리** + SQLite `state.db`(engine_state/pushed_emails/mx_cache/run_lock) + 엔진 전용 세션. `app/config`·`app/db`(OAuth) 비의존.
+2. `services/` 모듈 골격 분리.
+3. SheetControl — `⚙️설정`/`📅키워드스케줄` 읽기·검증(예정일시 09:00 파싱, 키워드 보호 규칙) + `발송내역`(push_status 컬럼)/`⚠️경고` append + 상태 전이.
+4. EmailValidator — 문법 + MX(dnspython, 캐시) + 시스템주소/일회용 제외.
+5. DedupStore — `accepted`만 기준 대조 + backfill.
+6. GeminiClient + KeywordResolver(키워드 비면만 채움).
+7. SchedulePlanner — 예정표 top-up(주기 간격, 회피목록, 비어있지 않은 키워드 보존).
+8. SmartleadClient — 리드 배치 푸시(공식 파라미터) + 통계 조회 + push_status 매핑.
+9. AlertMonitor — delta·최소표본 bounce 판정 + suspend + ⚠️경고.
+10. HourlyTick + RunPipeline 조립 + run_lock/running 전이 + APScheduler(1h, `max_instances=1, coalesce=True`, Asia/Seoul) + 부팅 시 고아 락 정리 + `/healthz`.
+11. 기존 코드 정돈(중복 라우트·CORS).
+12. 단위/통합 테스트 + 테스트 모드.
+13. Railway 배포(볼륨, 환경변수, 의존성) + 컨트롤 시트 템플릿 생성.
 
 ---
 
