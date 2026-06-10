@@ -667,6 +667,15 @@ select option:disabled {
     opacity: 0.6;
 }
 
+.email-tag .email-type {
+    padding: 1px 6px;
+    background: rgba(16, 185, 129, 0.2);
+    border-radius: var(--radius-sm);
+    font-size: 0.7rem;
+    font-family: inherit;
+    opacity: 0.85;
+}
+
 .email-tag:hover .copy-icon {
     opacity: 1;
 }

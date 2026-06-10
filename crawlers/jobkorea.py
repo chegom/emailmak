@@ -273,6 +273,7 @@ class JobKoreaCrawler(BaseCrawler):
                 if company.get('homepage'):
                     emails = await self.email_extractor.extract_from_url(company['homepage'])
                     company['emails'] = emails
+                    company['email_types'] = self.email_extractor.label_emails(emails, company['homepage'])
                 
                 # 요청 간 딜레이
                 await asyncio.sleep(0.3)

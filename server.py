@@ -176,6 +176,8 @@ async def crawl_stream(request: CrawlRequest):
                         if company.get('homepage'):
                             emails = await crawler.email_extractor.extract_from_url(company['homepage'])
                             company['emails'] = emails
+                            # 콜드메일 발송 검수용 유형 라벨 (emails와 같은 순서)
+                            company['email_types'] = crawler.email_extractor.label_emails(emails, company['homepage'])
                         
                         # 진행 상황 전송
                         yield f"data: {json.dumps({'type': 'progress', 'current': idx + 1, 'total': total, 'company': company}, ensure_ascii=False)}\n\n"

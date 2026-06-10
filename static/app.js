@@ -296,12 +296,16 @@ function addResult(company) {
         </div>
         <div class="email-list">
             ${hasEmail
-            ? company.emails.map(email => `
-                    <span class="email-tag" onclick="copyEmail('${escapeHtml(email)}')">
+            ? company.emails.map((email, i) => {
+                const type = (company.email_types || [])[i] || '';
+                return `
+                    <span class="email-tag" title="${escapeHtml(type)}" onclick="copyEmail('${escapeHtml(email)}')">
                         ${escapeHtml(email)}
+                        ${type ? `<span class="email-type">${escapeHtml(type)}</span>` : ''}
                         <span class="copy-icon">📋</span>
                     </span>
-                `).join('')
+                `;
+            }).join('')
             : '<span class="no-email">이메일을 찾지 못했습니다</span>'
         }
         </div>
@@ -374,12 +378,15 @@ function exportToCSV() {
     }
 
     // CSV 헤더 (구글 시트와 동일)
-    const headers = ['회사명', '채용공고 제목', '대표 이메일', '추가 이메일', '홈페이지', '채용사이트 링크', '기업정보 링크', '수집 출처', '수집 날짜'];
+    const headers = ['회사명', '채용공고 제목', '대표 이메일', '추가 이메일', '홈페이지', '채용사이트 링크', '기업정보 링크', '수집 출처', '수집 날짜', '대표 이메일 유형', '발송권장'];
 
     // CSV 데이터
     const today = new Date().toISOString().slice(0, 10);
     const rows = results.map(r => {
         const emails = r.emails || [];
+        const types = r.email_types || [];
+        const primaryType = types[0] || '';
+        const recommend = (primaryType.includes('회사도메인') || primaryType.includes('무료메일')) ? 'Y' : '';
         return [
             r.company_name || '',
             r.job_title || '',
@@ -389,7 +396,9 @@ function exportToCSV() {
             r.job_url || '',
             r.company_url || '',
             r.source || '',
-            today
+            today,
+            primaryType,
+            recommend
         ];
     });
 

@@ -70,16 +70,20 @@ class GoogleSheetExporter:
             # 3. 새 워크시트 생성
             worksheet = doc.add_worksheet(title=sheet_title, rows=max(100, len(data) + 20), cols=20)
                 
-            # 헤더 준비
-            headers = ["회사명", "채용공고 제목", "대표 이메일", "추가 이메일", "홈페이지", "채용사이트 링크", "기업정보 링크", "수집 출처", "수집 날짜"]
-            
+            # 헤더 준비 (신규 컬럼은 발송명단 열 순서 보존을 위해 맨 뒤에 추가)
+            headers = ["회사명", "채용공고 제목", "대표 이메일", "추가 이메일", "홈페이지", "채용사이트 링크", "기업정보 링크", "수집 출처", "수집 날짜", "대표 이메일 유형", "발송권장"]
+
             # 데이터 변환
             today_str = datetime.now().strftime("%Y-%m-%d")
             rows = []
             for company in data:
                 emails = company.get('emails', [])
+                email_types = company.get('email_types', [])
                 primary_email = emails[0] if emails else ""
+                primary_type = email_types[0] if email_types else ""
                 other_emails = ", ".join(emails[1:]) if len(emails) > 1 else ""
+                # 회사도메인/무료메일(SMB 대표 연락처)만 발송 권장 — 타도메인은 제3자 가능성
+                recommend = "Y" if ("회사도메인" in primary_type or "무료메일" in primary_type) else ""
 
                 rows.append([
                     company.get('company_name', ''),
@@ -90,14 +94,16 @@ class GoogleSheetExporter:
                     company.get('job_url', ''),
                     company.get('company_url', ''),
                     company.get('source', ''),
-                    today_str
+                    today_str,
+                    primary_type,
+                    recommend
                 ])
-                
+
             # 데이터 쓰기
             worksheet.update(range_name='A1', values=[headers] + rows)
 
             # 헤더 스타일링
-            worksheet.format("A1:I1", {
+            worksheet.format("A1:K1", {
                 "textFormat": {"bold": True},
                 "backgroundColor": {"red": 0.9, "green": 0.9, "blue": 0.9}
             })
@@ -146,7 +152,7 @@ class GoogleSheetExporter:
                         "sheetId": sheet_id,
                         "startRowIndex": 0,
                         "startColumnIndex": 0,
-                        "endColumnIndex": 9
+                        "endColumnIndex": 11
                     },
                     "criteria": {
                         "2": {
