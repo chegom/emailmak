@@ -512,8 +512,12 @@ async function saveResultsToSheet(isAuto) {
         return;
     }
     if (!configuredSheetUrl) {
-        showToast('먼저 ⚙️ 설정에서 시트를 지정하세요.', 'warning');
-        return;
+        // 초기 설정 로드가 실패했을 수 있으니 서버에서 한 번 더 확인
+        await loadSettings();
+        if (!configuredSheetUrl) {
+            showToast('먼저 ⚙️ 설정에서 시트를 지정하세요.', 'warning');
+            return;
+        }
     }
     const keyword = document.getElementById('keyword').value.trim() || '검색어없음';
     const sourceSelect = document.getElementById('source');
