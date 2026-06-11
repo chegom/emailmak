@@ -80,8 +80,22 @@ class EmailExtractor:
         'nate.com', 'outlook.com', 'hotmail.com', 'yahoo.com', 'icloud.com',
     }
 
+    # 회사 홈페이지가 아닌 URL — 채용사이트에 지도/SNS 링크가 홈페이지로 등록된 경우.
+    # 크롤링해도 이메일이 없고 시간만 소모하므로 건너뛴다.
+    SKIP_HOMEPAGE_DOMAINS = {
+        'map.kakao.com', 'place.map.kakao.com', 'map.naver.com',
+        'naver.me', 'kko.to', 'blog.naver.com', 'cafe.naver.com',
+        'instagram.com', 'facebook.com', 'youtube.com', 'pf.kakao.com',
+    }
+
     # sentry DSN 키 등 해시형 로컬파트 (예: a1b2c3...32자리hex@...)
     HEX_LOCAL_PATTERN = re.compile(r'^[0-9a-f]{20,}$')
+
+    # SLD(TLD 무시) 매칭에서 제외할 일반 단어 — 우연 일치 방지
+    GENERIC_SLD_WORDS = {
+        'mail', 'email', 'shop', 'store', 'market', 'home', 'site',
+        'blog', 'info', 'web', 'test', 'admin', 'korea', 'company',
+    }
 
     # 점수 → 발송명단 표시용 라벨
     SCORE_LABELS = {
@@ -114,6 +128,11 @@ class EmailExtractor:
         parsed = homepage_url if homepage_url.startswith(('http://', 'https://')) else 'https://' + homepage_url
         return self._registrable_domain(urlparse(parsed).netloc)
 
+    @staticmethod
+    def _sld(domain: str) -> str:
+        """도메인의 최상위 라벨 (예: prohanzkorea.co.kr → prohanzkorea)"""
+        return domain.split('.')[0] if domain else ''
+
     def _score_email(self, email: str, company_domain: str) -> Optional[int]:
         """
         콜드메일 적합성 점수 (낮을수록 우선, None이면 발송 불가 주소).
@@ -133,6 +152,16 @@ class EmailExtractor:
         domain_match = bool(company_domain) and (
             email_domain == company_domain or email_domain.endswith('.' + company_domain)
         )
+
+        # TLD만 다른 같은 회사 처리 (acme.com ↔ acme.co.kr 혼용이 국내에 흔함)
+        # 일반 단어(mail, shop 등)의 우연 일치를 막기 위해 4자 이상 + 일반어/무료메일 제외
+        if not domain_match and company_domain and email_domain not in self.FREE_MAIL_DOMAINS:
+            company_sld = self._sld(company_domain)
+            if (len(company_sld) >= 4
+                    and company_sld not in self.GENERIC_SLD_WORDS
+                    and company_sld == self._sld(email_domain)):
+                domain_match = True
+
         is_generic = local in self.GENERIC_LOCAL_PARTS
 
         if domain_match and not is_generic:
@@ -235,7 +264,14 @@ class EmailExtractor:
         # URL 정규화
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
-        
+
+        # 지도/SNS 링크는 회사 홈페이지가 아님 — 크롤링 생략
+        host = urlparse(url).netloc.lower()
+        if host.startswith('www.'):
+            host = host[4:]
+        if host in self.SKIP_HOMEPAGE_DOMAINS:
+            return []
+
         emails: Set[str] = set()
         
         async with httpx.AsyncClient(
