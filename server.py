@@ -221,6 +221,41 @@ async def login(request: LoginRequest):
     return {"token": auth.make_token(request.password)}
 
 
+class SettingsRequest(BaseModel):
+    sheet_url: str
+
+
+@app.get("/api/settings")
+async def read_settings(session: Session = Depends(get_session), _=Depends(require_token)):
+    return {
+        "sheet_url": get_setting(session, "crawl_sheet_url"),
+        "service_email": GoogleSheetExporter().get_service_email(),
+    }
+
+
+@app.post("/api/settings")
+async def write_settings(
+    request: SettingsRequest,
+    session: Session = Depends(get_session),
+    _=Depends(require_token),
+):
+    url = request.sheet_url.strip()
+    if not url.startswith("https://docs.google.com/spreadsheets/"):
+        raise HTTPException(status_code=400, detail="올바른 구글 시트 URL이 아닙니다.")
+    exporter = GoogleSheetExporter()
+    try:
+        exporter.authenticate()
+        exporter.client.open_by_url(url)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="시트를 열 수 없습니다. 봇 계정을 편집자로 초대했는지 확인하세요.",
+        )
+    set_setting(session, "crawl_sheet_url", url)
+    session.commit()
+    return {"success": True, "sheet_url": url}
+
+
 class CrawlRequest(BaseModel):
     """크롤링 요청 모델"""
     keyword: str
