@@ -38,3 +38,17 @@ def test_config_requires_token_when_protected(monkeypatch):
     client = TestClient(server.app)
     resp = client.get("/api/config/google-sheet")
     assert resp.status_code == 401
+
+
+def test_export_requires_token_when_protected(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "secret123")
+    client = TestClient(server.app)
+    resp = client.post("/api/export/sheet", json={"companies": [], "keyword": "k", "source": "사람인"})
+    assert resp.status_code == 401
+
+
+def test_settings_requires_token_when_protected(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "secret123")
+    client = TestClient(server.app)
+    resp = client.get("/api/settings")
+    assert resp.status_code == 401

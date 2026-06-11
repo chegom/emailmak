@@ -5,7 +5,7 @@ FastAPI 기반 크롤링 API 서버
 import asyncio
 import json
 import os
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Generator
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy.orm import Session
@@ -192,7 +192,7 @@ app.add_middleware(
 )
 
 
-def get_session() -> Session:
+def get_session() -> Generator[Session, None, None]:
     session = EngineSessionLocal()
     try:
         yield session
@@ -246,6 +246,8 @@ async def write_settings(
     try:
         exporter.authenticate()
         exporter.client.open_by_url(url)
+    except HTTPException:
+        raise
     except Exception:
         raise HTTPException(
             status_code=400,
