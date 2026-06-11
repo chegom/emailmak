@@ -13,6 +13,20 @@
 </head>
 
 <body>
+    <!-- 비밀번호 게이트 -->
+    <div id="authGate" class="modal hidden">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <h3>🔒 접근 비밀번호</h3>
+            <p class="modal-desc">이 도구를 사용하려면 비밀번호를 입력하세요.</p>
+            <input type="password" id="authPasswordInput" placeholder="비밀번호"
+                class="form-input" style="width: 100%; margin: 10px 0;">
+            <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
+                <button id="authSubmitBtn" class="btn-primary">확인</button>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         <!-- Header -->
         <header class="header">
@@ -21,6 +35,7 @@
                 <h1>Email Crawler</h1>
             </div>
             <p class="subtitle">채용사이트에서 회사 이메일을 자동으로 수집합니다</p>
+            <button id="settingsBtn" class="btn-secondary" style="margin-top: 10px;">⚙️ 설정</button>
         </header>
 
         <!-- Search Section -->
@@ -90,7 +105,7 @@
                         <span>📥</span> CSV 내보내기
                     </button>
                     <button id="googleSheetBtn" class="btn-success" style="background-color: #0F9D58; color: white;">
-                        <span>📊</span> 구글 시트
+                        <span>📊</span> 지금 저장
                     </button>
                 </div>
             </div>
@@ -112,7 +127,7 @@
     <div id="sheetModal" class="modal hidden">
         <div class="modal-overlay"></div>
         <div class="modal-content">
-            <h3>구글 시트로 내보내기</h3>
+            <h3>설정 — 구글 시트 지정</h3>
 
             <div id="serviceAccountSection" class="service-account-section"
                 style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 8px; margin-bottom: 20px;">
@@ -127,11 +142,12 @@
             </div>
 
             <p class="modal-desc">2. 데이터를 저장할 구글 시트 URL을 입력하세요.</p>
+            <p id="currentSheetInfo" class="modal-desc" style="font-size: 0.85rem; color: #a5b4fc;"></p>
             <input type="text" id="sheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/..."
                 class="form-input" style="width: 100%; margin: 10px 0;">
             <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 15px;">
                 <button id="sheetCancelBtn" class="btn-secondary">취소</button>
-                <button id="sheetConfirmBtn" class="btn-primary">내보내기</button>
+                <button id="sheetConfirmBtn" class="btn-primary">저장</button>
             </div>
         </div>
     </div>

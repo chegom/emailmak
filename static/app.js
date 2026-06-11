@@ -36,6 +36,103 @@ const stopBtn = document.getElementById('stopBtn');
 let results = [];
 let abortController = null;
 let isCrawling = false;
+let configuredSheetUrl = null;
+
+// ─── 인증 토큰 헬퍼 ───────────────────────────────────────
+const TOKEN_KEY = 'access_token';
+function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+
+async function authFetch(url, options = {}) {
+    const opts = { ...options };
+    opts.headers = { ...(opts.headers || {}), 'Authorization': 'Bearer ' + getToken() };
+    const res = await fetch(url, opts);
+    if (res.status === 401) {
+        showAuthGate();
+        throw new Error('인증이 필요합니다');
+    }
+    return res;
+}
+
+function showAuthGate() {
+    document.getElementById('authGate').classList.remove('hidden');
+}
+function hideAuthGate() {
+    document.getElementById('authGate').classList.add('hidden');
+}
+
+async function submitPassword() {
+    const pw = document.getElementById('authPasswordInput').value;
+    try {
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: pw }),
+        });
+        if (!res.ok) { showToast('비밀번호가 올바르지 않습니다.', 'error'); return; }
+        const data = await res.json();
+        setToken(data.token);
+        hideAuthGate();
+        document.getElementById('authPasswordInput').value = '';
+        await loadSettings();
+    } catch (e) {
+        showToast('로그인 오류가 발생했습니다.', 'error');
+    }
+}
+
+async function checkAuthOnLoad() {
+    try {
+        const res = await fetch('/api/settings', {
+            headers: { 'Authorization': 'Bearer ' + getToken() },
+        });
+        if (res.status === 401) { showAuthGate(); return; }
+        await loadSettings();
+    } catch (e) {
+        showAuthGate();
+    }
+}
+
+// ─── 설정 (구글 시트 지정) ────────────────────────────────
+async function loadSettings() {
+    try {
+        const res = await authFetch('/api/settings');
+        const data = await res.json();
+        configuredSheetUrl = data.sheet_url;
+        const info = document.getElementById('currentSheetInfo');
+        if (info) {
+            info.textContent = configuredSheetUrl
+                ? '현재 시트: ' + configuredSheetUrl
+                : '아직 시트가 지정되지 않았습니다.';
+        }
+        if (botEmailInput && data.service_email) botEmailInput.value = data.service_email;
+    } catch (e) { /* authFetch handles the gate */ }
+}
+
+async function saveSettings() {
+    const url = sheetUrlInput.value.trim();
+    if (!url) { showToast('시트 URL을 입력하세요.', 'warning'); return; }
+    sheetConfirmBtn.disabled = true;
+    try {
+        const res = await authFetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sheet_url: url }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast('시트가 저장되었습니다.', 'success');
+            configuredSheetUrl = data.sheet_url;
+            sheetModal.classList.add('hidden');
+            sheetUrlInput.value = '';
+        } else {
+            showToast(data.detail || '저장에 실패했습니다.', 'error');
+        }
+    } catch (e) {
+        showToast('저장 중 오류가 발생했습니다.', 'error');
+    } finally {
+        sheetConfirmBtn.disabled = false;
+    }
+}
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
@@ -56,30 +153,20 @@ function initEventListeners() {
     // CSV 내보내기
     exportBtn.addEventListener('click', exportToCSV);
 
-    // 구글 시트 버튼
-    googleSheetBtn.addEventListener('click', async () => {
-        if (results.length === 0) {
-            showToast('내보낼 결과가 없습니다.', 'warning');
-            return;
-        }
-        sheetModal.classList.remove('hidden');
-
-        // 봇 이메일 로드 (이미 로드되지 않았을 경우)
-        if (botEmailInput.value === '로딩중...' || botEmailInput.value === '') {
-            try {
-                const res = await fetch('/api/config/google-sheet');
-                const data = await res.json();
-                if (data.service_email) {
-                    botEmailInput.value = data.service_email;
-                } else {
-                    botEmailInput.value = '설정되지 않음 (서버 확인 필요)';
-                }
-            } catch (e) {
-                console.error(e);
-                botEmailInput.value = '로드 실패';
-            }
-        }
+    // 비밀번호 게이트
+    document.getElementById('authSubmitBtn').addEventListener('click', submitPassword);
+    document.getElementById('authPasswordInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submitPassword();
     });
+
+    // 설정 버튼: 모달 열기 + 설정 로드
+    document.getElementById('settingsBtn').addEventListener('click', async () => {
+        sheetModal.classList.remove('hidden');
+        await loadSettings();
+    });
+
+    // 구글 시트 "지금 저장" 버튼
+    googleSheetBtn.addEventListener('click', () => saveResultsToSheet(false));
 
     // 봇 이메일 복사
     copyEmailBtn.addEventListener('click', () => {
@@ -105,11 +192,14 @@ function initEventListeners() {
         sheetModal.classList.add('hidden');
     });
 
-    // 구글 시트 내보내기 확정
-    sheetConfirmBtn.addEventListener('click', exportToGoogleSheet);
+    // 설정 저장 확정
+    sheetConfirmBtn.addEventListener('click', saveSettings);
 
     // 정지 버튼 클릭
     stopBtn.addEventListener('click', stopCrawl);
+
+    // 로드 시 인증 확인
+    checkAuthOnLoad();
 }
 
 /**
@@ -186,7 +276,7 @@ function stopCrawl() {
  * SSE 스트리밍으로 크롤링
  */
 async function crawlWithStream(keyword, startPage, endPage, source) {
-    const response = await fetch('/api/crawl/stream', {
+    const response = await authFetch('/api/crawl/stream', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -253,6 +343,7 @@ function handleStreamMessage(data) {
             setTimeout(() => hideProgress(), 1000);
             updateResultsCount();
             showToast(`크롤링 완료! ${results.length}개 회사 수집됨`, 'success');
+            saveResultsToSheet(true);
             break;
 
         case 'error':
@@ -413,55 +504,34 @@ function exportToCSV() {
 }
 
 /**
- * 구글 시트로 내보내기
+ * 결과를 구글 시트에 저장 (자동/수동 공용)
  */
-async function exportToGoogleSheet() {
-    const sheetUrl = sheetUrlInput.value.trim();
-
-    if (!sheetUrl) {
-        showToast('유효한 구글 시트 URL을 입력해주세요.', 'warning');
+async function saveResultsToSheet(isAuto) {
+    if (results.length === 0) {
+        if (!isAuto) showToast('내보낼 결과가 없습니다.', 'warning');
         return;
     }
-
-    // 버튼 로딩 상태
-    const originalText = sheetConfirmBtn.innerText;
-    sheetConfirmBtn.innerText = '내보내는 중...';
-    sheetConfirmBtn.disabled = true;
-
-    // 현재 검색어와 출처 가져오기
+    if (!configuredSheetUrl) {
+        showToast('먼저 ⚙️ 설정에서 시트를 지정하세요.', 'warning');
+        return;
+    }
     const keyword = document.getElementById('keyword').value.trim() || '검색어없음';
     const sourceSelect = document.getElementById('source');
     const sourceText = sourceSelect.options[sourceSelect.selectedIndex].text;
-
     try {
-        const response = await fetch('/api/export/sheet', {
+        const res = await authFetch('/api/export/sheet', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                sheet_url: sheetUrl,
-                companies: results,
-                keyword: keyword,
-                source: sourceText
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ companies: results, keyword, source: sourceText }),
         });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-            showToast(data.message, 'success');
-            sheetModal.classList.add('hidden');
-            sheetUrlInput.value = ''; // 초기화
+        const data = await res.json();
+        if (res.ok && data.success) {
+            showToast((isAuto ? '자동 저장됨: ' : '') + data.message, 'success');
         } else {
-            showToast(data.detail || '내보내기에 실패했습니다.', 'error');
+            showToast(data.detail || '저장에 실패했습니다.', 'error');
         }
-    } catch (error) {
+    } catch (e) {
         showToast('서버 연결 오류가 발생했습니다.', 'error');
-        console.error(error);
-    } finally {
-        sheetConfirmBtn.innerText = originalText;
-        sheetConfirmBtn.disabled = false;
     }
 }
 
