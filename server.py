@@ -38,6 +38,17 @@ app = FastAPI(
 _engine_scheduler = None
 
 
+def ensure_state_schema():
+    """Create the engine state.db tables. Must run regardless of ENGINE_ENABLED,
+    because the crawl settings/export endpoints depend on the engine_state table."""
+    EngineBase.metadata.create_all(engine_state_engine)
+
+
+@app.on_event("startup")
+async def _ensure_state_schema():
+    ensure_state_schema()
+
+
 @app.on_event("startup")
 async def _start_engine():
     """Start the sheet-driven automation scheduler when engine env is configured."""
@@ -50,7 +61,7 @@ async def _start_engine():
         from engine.settings import get_engine_settings
 
         get_engine_settings()
-        EngineBase.metadata.create_all(engine_state_engine)
+        ensure_state_schema()
         with EngineSessionLocal() as session:
             clear_stale_locks(session, before=datetime.utcnow() - timedelta(hours=6))
 
