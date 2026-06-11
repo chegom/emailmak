@@ -307,7 +307,7 @@ def get_crawler_class(source: str):
 
 
 @app.post("/api/crawl")
-async def crawl(request: CrawlRequest):
+async def crawl(request: CrawlRequest, _=Depends(require_token)):
     """
     크롤링 API (일반 JSON 응답)
     """
@@ -337,7 +337,7 @@ async def crawl(request: CrawlRequest):
 
 
 @app.post("/api/crawl/stream")
-async def crawl_stream(request: CrawlRequest):
+async def crawl_stream(request: CrawlRequest, _=Depends(require_token)):
     """
     크롤링 API (SSE 스트리밍 응답)
     실시간으로 진행 상황을 전송
@@ -427,7 +427,7 @@ async def export_sheet(
 
 
 @app.get("/api/config/google-sheet")
-async def get_google_sheet_config():
+async def get_google_sheet_config(_=Depends(require_token)):
     """구글 시트 설정 정보(봇 이메일) 반환"""
     try:
         exporter = GoogleSheetExporter()

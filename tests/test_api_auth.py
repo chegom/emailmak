@@ -24,3 +24,17 @@ def test_login_no_protection_returns_empty_token(monkeypatch):
     resp = client.post("/api/login", json={"password": ""})
     assert resp.status_code == 200
     assert resp.json()["token"] == ""
+
+
+def test_crawl_requires_token_when_protected(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "secret123")
+    client = TestClient(server.app)
+    resp = client.post("/api/crawl", json={"keyword": "x"})
+    assert resp.status_code == 401
+
+
+def test_config_requires_token_when_protected(monkeypatch):
+    monkeypatch.setenv("APP_PASSWORD", "secret123")
+    client = TestClient(server.app)
+    resp = client.get("/api/config/google-sheet")
+    assert resp.status_code == 401
