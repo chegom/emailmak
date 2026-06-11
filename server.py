@@ -7,7 +7,8 @@ import json
 import os
 from typing import Optional, List, Dict, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
+from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
@@ -22,7 +23,10 @@ from engine.db import SessionLocal as EngineSessionLocal
 from engine.db import engine as engine_state_engine
 import engine.models  # noqa: F401
 from engine.scheduler import acquire_lock, clear_stale_locks, due_rows, lock_key, release_lock
+from engine.kv import get_setting, set_setting
 from utils.google_sheets import GoogleSheetExporter
+
+import auth
 
 
 app = FastAPI(
@@ -186,6 +190,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def get_session() -> Session:
+    session = EngineSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
+
+
+def require_token(authorization: str = Header(default="")):
+    if not auth.protection_enabled():
+        return
+    token = authorization.removeprefix("Bearer ").strip()
+    if not auth.verify_token(token):
+        raise HTTPException(status_code=401, detail="인증이 필요합니다.")
+
+
+class LoginRequest(BaseModel):
+    password: str = ""
+
+
+@app.post("/api/login")
+async def login(request: LoginRequest):
+    if not auth.protection_enabled():
+        return {"token": ""}
+    if not auth.check_password(request.password):
+        raise HTTPException(status_code=401, detail="비밀번호가 올바르지 않습니다.")
+    return {"token": auth.make_token(request.password)}
 
 
 class CrawlRequest(BaseModel):
