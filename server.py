@@ -265,11 +265,11 @@ class CrawlRequest(BaseModel):
 
 
 class ExportRequest(BaseModel):
-    """구글 시트 내보내기 요청 모델"""
-    sheet_url: str
+    """구글 시트 내보내기 요청 모델 (sheet_url은 무시됨 — 서버 저장값 사용)"""
     companies: List[Dict[str, Any]]
     keyword: str = "검색어없음"
     source: str = "기타"
+    sheet_url: Optional[str] = None  # 하위 호환용, 사용 안 함
 
 
 class CompanyResult(BaseModel):
@@ -403,26 +403,25 @@ async def crawl_stream(request: CrawlRequest):
 
 
 @app.post("/api/export/sheet")
-async def export_sheet(request: ExportRequest):
-    """구글 시트로 데이터 내보내기"""
+async def export_sheet(
+    request: ExportRequest,
+    session: Session = Depends(get_session),
+    _=Depends(require_token),
+):
+    """구글 시트로 데이터 내보내기 (서버에 저장된 시트 URL 사용)"""
+    sheet_url = get_setting(session, "crawl_sheet_url")
+    if not sheet_url:
+        raise HTTPException(status_code=400, detail="먼저 설정에서 시트를 지정하세요.")
     try:
         exporter = GoogleSheetExporter()
         success, message = exporter.export_to_sheet(
-            request.sheet_url, 
-            request.companies, 
-            request.keyword, 
-            request.source
+            sheet_url, request.companies, request.keyword, request.source
         )
-        
         if success:
             return {"success": True, "message": message}
-        else:
-            raise HTTPException(status_code=500, detail=message)
-
+        raise HTTPException(status_code=500, detail=message)
     except HTTPException:
         raise
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
